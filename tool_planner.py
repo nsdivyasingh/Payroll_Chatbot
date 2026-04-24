@@ -1,91 +1,52 @@
 from __future__ import annotations
 
-from llm_handler import ask_llm_json, get_tool_schemas
 
-ALLOWED_TOOLS = {"get_salary", "get_lop", "get_tax"}
+def plan_tool(parsed_query: dict, employee_id: int) -> dict:
+    intent = parsed_query.get("intent")
+    month = parsed_query.get("month")
+    year = parsed_query.get("year")
 
-
-def choose_tool_call(query: str, normalized_month: str | None = None) -> dict:
-    q = query.lower()
-
-    # Deterministic first-pass mapping for stability.
-    if any(k in q for k in ["lop", "loss of pay"]):
-        return {
-            "tool": "get_lop",
-            "month": normalized_month,
-            "reason": "deterministic_lop_keyword",
-            "confidence": "high",
-        }
-    if any(k in q for k in ["tax", "regime", "tds"]):
-        return {
-            "tool": "get_tax",
-            "month": normalized_month,
-            "reason": "deterministic_tax_keyword",
-            "confidence": "high",
-        }
-    if any(
-        k in q
-        for k in [
-            "salary",
-            "net pay",
-            "deduction",
-            "gross",
-            "allowance",
-            "reimbursement",
-            "pf",
-            "pt",
-        ]
-    ):
-        return {
-            "tool": "get_salary",
-            "month": normalized_month,
-            "reason": "deterministic_salary_keyword",
-            "confidence": "high",
-        }
-
-    tool_schemas = get_tool_schemas()
-    prompt = f"""
-You are a payroll tool planner.
-Choose exactly one tool for the query using this tool schema:
-{tool_schemas}
-
-Month extraction:
-- Use normalized month if provided.
-- If no month is available, month should be null.
-
-Return strict JSON only:
-{{
-  "tool": "get_salary|get_lop|get_tax|none",
-  "month": "Mon-YYYY or null",
-  "reason": "short reason",
-  "confidence": "high|medium|low"
-}}
-
-Query:
-{query}
-
-Deterministic normalized month:
-{normalized_month}
-"""
-    try:
-        result = ask_llm_json(prompt)
-    except Exception:
-        return {
-            "tool": "none",
-            "month": normalized_month,
-            "reason": "planner_failed",
-            "confidence": "low",
-        }
-
-    tool = str(result.get("tool", "none")).strip().lower()
-    month = result.get("month")
-    if tool not in ALLOWED_TOOLS:
-        tool = "none"
-    if not isinstance(month, str) or not month.strip():
-        month = normalized_month
-    return {
-        "tool": tool,
+    base_params = {
+        "employee_id": employee_id,
         "month": month,
-        "reason": str(result.get("reason", "")),
-        "confidence": str(result.get("confidence", "low")).lower(),
+        "year": year,
     }
+
+    if intent == "salary":
+        return {"tool": "get_salary", "params": base_params}
+    if intent == "tax":
+        return {"tool": "get_tax", "params": base_params}
+    if intent == "lop":
+        return {"tool": "get_lop", "params": base_params}
+    if intent in {"ot_query", "allowance_query"}:
+        return {"tool": "get_ot", "params": base_params}
+    if intent == "deduction_query":
+        return {"tool": "get_salary", "params": base_params}
+    if intent == "salary_explanation":
+        return {
+            "tool": "analyze_salary",
+            "params": {
+                **base_params,
+                "previous_month": parsed_query.get("previous_month"),
+                "previous_year": parsed_query.get("previous_year"),
+            },
+        }
+    return {"tool": "fallback", "params": {}}
+
+
+def validate_plan(plan: dict) -> bool:
+    tool = plan.get("tool")
+    if tool == "fallback":
+        return True
+    params = plan.get("params", {})
+    if not isinstance(params, dict):
+        return False
+    if params.get("employee_id") in (None, ""):
+        return False
+    # All non-fallback tools need month/year for deterministic period targeting.
+    if params.get("month") in (None, "") or params.get("year") in (None, ""):
+        return False
+    if tool == "analyze_salary":
+        if params.get("previous_month") in (None, "") or params.get("previous_year") in (None, ""):
+            return False
+    return True

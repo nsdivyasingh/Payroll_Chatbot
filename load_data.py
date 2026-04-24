@@ -1,10 +1,14 @@
 import pandas as pd
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, text
 
 DATABASE_URL = "postgresql://postgres:admin123@localhost:5432/payroll_db"
 engine = create_engine(DATABASE_URL)
 
 file_path = "payroll_data.xlsx"
+
+with engine.begin() as conn:
+    with open("schema.sql", "r") as f:
+        conn.execute(text(f.read()))
 
 # -------------------------------
 # 1. Load Data
@@ -28,6 +32,8 @@ ot_df = clean_columns(ot_df)
 tax_df = clean_columns(tax_df)
 
 pay_df = pay_df.drop_duplicates()
+lop_df = lop_df.drop_duplicates()
+ot_df = ot_df.drop_duplicates()
 tax_df = tax_df.drop_duplicates()
 
 # -------------------------------
@@ -35,11 +41,14 @@ tax_df = tax_df.drop_duplicates()
 # -------------------------------
 pay_df.rename(columns={
     "employeecode": "employee_code",
-    "month_name": "month"
+    "code": "employee_code",
+    "month_name": "month",
+    "emonth": "month"
 }, inplace=True)
 
 lop_df.rename(columns={
     "employeecode": "employee_code",
+    "employee_no": "employee_code",
     "month": "month",
     "date": "lop_date",
     "lop": "lop_days",
@@ -47,12 +56,17 @@ lop_df.rename(columns={
 
 ot_df.rename(columns={
     "employeecode": "employee_code",
-    "paid_month": "month"
+    "paid_month": "month",
+    "allowancetype": "allowance_type",
+    "fromdate": "from_date",
+    "todate": "to_date"
 }, inplace=True)
 
 tax_df.rename(columns={
     "employeecode": "employee_code",
-    "month": "month"
+    "ecode": "employee_code",
+    "month": "month",
+    "year": "eyear"
 }, inplace=True)
 
 def month_to_mon_year(month_series, year_series=None):
@@ -66,6 +80,11 @@ def month_to_mon_year(month_series, year_series=None):
         dt = pd.to_datetime(month_text, format="mixed", errors="coerce")
     return dt.dt.strftime("%b-%Y")
 
+if "month" in tax_df.columns and "eyear" not in tax_df.columns:
+    tax_df["eyear"] = pd.to_numeric(
+        tax_df["month"].astype(str).str.split("-").str[1],
+        errors="coerce"
+    )
 
 # Normalize month values to a consistent Mon-YYYY format.
 if "month" in pay_df.columns:
@@ -80,10 +99,57 @@ if "month" in tax_df.columns:
 if 'month' not in pay_df.columns:
     raise Exception(f"Month column not found. Available columns: {pay_df.columns}")
 
+def split_month_year(df):
+    df["month"] = df["month"].astype(str)
+
+    df["month_clean"] = df["month"].str.split("-").str[0]
+    df["year_clean"] = df["month"].str.split("-").str[1]
+
+    return df
+
+pay_summary_df = split_month_year(pay_df.copy())
+tax_summary_df = split_month_year(tax_df.copy())
+
+pay_summary_df["month"] = pay_summary_df["month_clean"]
+pay_summary_df["eyear"] = pd.to_numeric(pay_summary_df["year_clean"], errors="coerce")
+tax_summary_df["month"] = tax_summary_df["month_clean"]
+tax_summary_df["eyear"] = pd.to_numeric(tax_summary_df["year_clean"], errors="coerce")
+
+pay_summary_df.drop(columns=["month_clean", "year_clean"], inplace=True)
+tax_summary_df.drop(columns=["month_clean", "year_clean"], inplace=True)
+
+# Aggregate curated summary tables at employee+month granularity.
+pay_summary_df = pay_summary_df.groupby(
+    ["employee_code", "month", "eyear"],
+    as_index=False
+).agg({
+    "gross_earning": "sum",
+    "gross_deduction": "sum",
+    "total_netpay": "sum",
+    "income_tax_ded": "sum",
+    "lopd": "sum"
+})
+
+tax_summary_df = tax_summary_df.groupby(
+    ["employee_code", "month", "eyear"],
+    as_index=False
+).agg({
+    "total_tax_liability": "sum"
+})
+
 # -------------------------------
 # 5. Insert Employees (SAFE UPSERT)
 # -------------------------------
-employees = pay_df[['employee_code']].drop_duplicates()
+all_employee_codes = pd.concat(
+    [
+        pay_df.get("employee_code", pd.Series(dtype="object")),
+        lop_df.get("employee_code", pd.Series(dtype="object")),
+        ot_df.get("employee_code", pd.Series(dtype="object")),
+        tax_df.get("employee_code", pd.Series(dtype="object")),
+    ],
+    ignore_index=True
+).dropna().astype(str).str.strip()
+employees = pd.DataFrame({"employee_code": all_employee_codes.unique()})
 
 with engine.begin() as conn:
     for _, row in employees.iterrows():
@@ -107,49 +173,73 @@ emp_map = pd.read_sql(
 # 7. Apply Mapping to ALL tables
 # -------------------------------
 def apply_mapping(df):
+    if "employee_code" not in df.columns:
+        return df
+    df["employee_code"] = df["employee_code"].astype(str).str.strip()
     df = df.merge(emp_map, on="employee_code", how="left")
-    df.drop(columns=["employee_code"], inplace=True)
     return df
 
+pay_raw_df = apply_mapping(pay_df.copy())
+lop_raw_df = apply_mapping(lop_df.copy())
+ot_raw_df = apply_mapping(ot_df.copy())
+tax_raw_df = apply_mapping(tax_df.copy())
+pay_summary_df = apply_mapping(pay_summary_df)
+tax_summary_df = apply_mapping(tax_summary_df)
 
-def align_to_table_columns(df, table_name):
-    inspector = inspect(engine)
-    table_columns = [col["name"] for col in inspector.get_columns(table_name)]
-    if not table_columns:
-        raise Exception(f"No columns found for table '{table_name}'")
+# Strict column contracts for summary tables.
+pay_summary_df = pay_summary_df[
+    [
+        "employee_id",
+        "month",
+        "eyear",
+        "gross_earning",
+        "gross_deduction",
+        "total_netpay",
+        "income_tax_ded",
+        "lopd"
+    ]
+]
+tax_summary_df = tax_summary_df[
+    [
+        "employee_id",
+        "month",
+        "eyear",
+        "total_tax_liability"
+    ]
+]
 
-    common_columns = [col for col in df.columns if col in table_columns]
-    missing_required = [col for col in ("employee_id", "month") if col in table_columns and col not in common_columns]
-    if missing_required:
-        raise Exception(
-            f"Missing required columns for table '{table_name}': {missing_required}. "
-            f"Available DataFrame columns: {list(df.columns)}"
-        )
-
-    dropped_columns = [col for col in df.columns if col not in table_columns]
-    if dropped_columns:
-        print(f"[INFO] Dropping extra columns for '{table_name}': {dropped_columns}")
-
-    return df[common_columns]
-
-pay_df = apply_mapping(pay_df)
-lop_df = apply_mapping(lop_df)
-ot_df = apply_mapping(ot_df)
-tax_df = apply_mapping(tax_df)
-
-for df in (pay_df, lop_df, ot_df, tax_df):
+for df in (pay_raw_df, lop_raw_df, ot_raw_df, tax_raw_df, pay_summary_df, tax_summary_df):
     if "month" in df.columns:
         df.dropna(subset=["month"], inplace=True)
 
-lop_df = align_to_table_columns(lop_df, "lop_data")
-ot_df = align_to_table_columns(ot_df, "ot_data")
-tax_df = align_to_table_columns(tax_df, "tax_data")
+pay_summary_df.dropna(subset=["employee_id", "month", "eyear"], inplace=True)
+tax_summary_df.dropna(subset=["employee_id", "month", "eyear"], inplace=True)
+pay_summary_df["eyear"] = pay_summary_df["eyear"].astype(int)
+tax_summary_df["eyear"] = tax_summary_df["eyear"].astype(int)
 
 
 # -------------------------------
 # 8. Insert Data (batch)
 # -------------------------------
-pay_df.to_sql("pay_register", engine, if_exists="replace", index=False)
-lop_df.to_sql("lop_data", engine, if_exists="replace", index=False, method="multi")
-ot_df.to_sql("ot_data", engine, if_exists="replace", index=False, method="multi")
-tax_df.to_sql("tax_data", engine, if_exists="replace", index=False, method="multi")
+with engine.begin() as conn:
+    conn.execute(text("""
+        DROP TABLE IF EXISTS pay_register_raw, lop_data_raw, ot_data_raw, tax_data_raw
+    """))
+    
+    conn.execute(text("""
+        TRUNCATE TABLE pay_register, tax_data
+    """))
+
+# RAW (replace)
+pay_raw_df.to_sql("pay_register_raw", engine, if_exists="replace", index=False, method="multi")
+lop_raw_df.to_sql("lop_data_raw", engine, if_exists="replace", index=False, method="multi")
+ot_raw_df.to_sql("ot_data_raw", engine, if_exists="replace", index=False, method="multi")
+tax_raw_df.to_sql("tax_data_raw", engine, if_exists="replace", index=False, method="multi")
+
+# CURATED (append)
+pay_summary_df.to_sql("pay_register", engine, if_exists="append", index=False, method="multi")
+tax_summary_df.to_sql("tax_data", engine, if_exists="append", index=False, method="multi")
+
+# TRACKERS (full-fidelity replace)
+lop_raw_df.to_sql("lop_data", engine, if_exists="replace", index=False, method="multi")
+ot_raw_df.to_sql("ot_data", engine, if_exists="replace", index=False, method="multi")

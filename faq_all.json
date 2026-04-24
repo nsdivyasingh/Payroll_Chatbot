@@ -1,0 +1,257 @@
+[
+  {
+    "question": "What is link to access Stohrm portal?  What is the process to reset the password?",
+    "answer": "The Stohrm portal link and the password reset process manual are below.\nhttps://www.stohrm.com/stohrmwebapp/index.php?q=login&m=index&client=ascendion",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "My Stohrm portal user access is blocked.  How do I unlock it?",
+    "answer": "For unlocking the user access, write to payrollqueries.ggm@ascendion.com",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "How to update my email address and mobile number on Stohrm portal?",
+    "answer": "Please share your details with your HR POC and they will update in Stohrm portal by end of the month.",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "Who should I contact if I don't receive OTP while resetting my password in Stohrm portal?",
+    "answer": "Please write to payrollqueries.ggm@ascendion.com.",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "When do I get my Form 16?",
+    "answer": "Kindly note form 16 for a financial year will be received by June of the following year. For eg. Form 16 for FY 2024-25 will be issued by Jun 2025",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "How do I open my Form 16?",
+    "answer": "Form 16 is password protected, please enter your PAN (in lower case) and Date of Birth (DDMMYYYY) as the password to open the file.\n\nE.g.: abcps1234e01011980(PAN +DOB)\n\nThe Form-16 has been digitally signed. If you need any help in validating digital signature, please refer to the document \"Steps to validate the digital signature\" (attached in this mail).",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "What are the reasons for salary reduction in a payroll?",
+    "answer": "Below are some of the reasons for which there is a deduction in salary",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "Why is higher tax deducted from my salary?",
+    "answer": "If there is an increase in gross earning that could lead to the higher tax deduction.",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "What is the Professional Tax deduction in my salary?",
+    "answer": "Professional Tax is required to be deducted from employees' salary and remitted to State tax authorities based on local laws .",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "What is the medical deduction in my salary?",
+    "answer": "If you have opted for Medical insurance of your dependents, then the additional amount gets deducted from your salary as per the selection made by you. If you have further any discrepancy regarding deduction, kindly connect with HR POC",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "Why is my income tax deduction more than the last month?",
+    "answer": "Due to the change in tax regime, there is a change in income tax deduction . For better clarity, you can refer to the tax slab in tax computation sheet 2) Due to some changes done in declaration there might be a change in tax deduction.",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "How can I save taxes on my take-home salary?",
+    "answer": "For Tax saving details, please connect with your financial advisor, as we are not the right POC to assist you.",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "How to do the declaration on portal?",
+    "answer": "You need to log on to Stohrm portal and update your declarations between 5th to 17th of the month under Tax and Reimbursement tab",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "How to do proof submission?",
+    "answer": "Proof submission note is available in the Download section of Stohrm portal",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "How to change tax regime during a financial year?",
+    "answer": "Tax regime once selected during a financial year cannot be changed until the end of the financial year.",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "How to download the Tax computation sheet from portal?",
+    "answer": "Tax computation sheet can be downloaded from the below path of your Ascent Portal.\n\n1. Login to the portal - https://www.stohrm.com/stohrmwebapp/index.php/ascendion\n2. Navigate to the Payroll and Tax option and click on it.\n3. Once this option is opened, you will see Tax computation.\n4. You can select the year as per your requirement and view or download the same",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "Why my tax proofs are not considered?",
+    "answer": "You would have received an email from donotreply@ascent-online.com mentioning the reason for rejection of your proofs",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "Where can I get FBP component details?",
+    "answer": "FBP component details can be accessed from Stohrm portal under Tax and Reimbursement tab from 5th to 17th of the month",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "Why I am unable to see Sodexo/Food coupon amount in my payslip?",
+    "answer": "Sodexo amount will not be visible in payslips as this is loaded separately in Sodexo card by 10th of every month. You can check the updated balance in your card through the Pluxee App",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "Why I am unable to see the gift voucher amount in my payslip?",
+    "answer": "Gift voucher amount will not be visible in payslips as this is loaded separately in your gift card by end of the financial year. You can check the updated balance in your card through the Pluxee App",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "Whom do I contact if my Sodexo / Pluxee card is not working?",
+    "answer": "Please reach out to below Sodexo service number for any assistance.\n022 49196919\n022 69196919",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "Why my NPS contribution is not visible in my payslip?",
+    "answer": "NPS Contribution amount will not be visible in payslips as this is loaded separately in your NPS account by 5th of the month. You can check the contribution details by loggin in into your PRAN account",
+    "source_sheet": "ADSPL - India"
+  },
+  {
+    "question": "What is the timeline for salary payment?",
+    "answer": "Employees salary payment is released on the 1st of every month. Salary can be released before the 1st of month only in case of public holiday, Bank holiday, festival holiday or as per management decision.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "What is the CTC, Gross Salary, and net take home salary?",
+    "answer": "CTC: - CTC is the sum total of 1) Gross salary of an employee and 2) the amount paid by employer towards PF, ESI, Gratuity etc.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "What is attendance and payroll cycle?",
+    "answer": "The attendance cycle run from mid-month to mid-month while payroll cycle run from 1st to last day of calendar (i.e.,1st to 31st).",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "From where I can get the documents relating to payroll?",
+    "answer": "Payroll related documents like pay slip, CTC break up, income tax computation other FAQ’s will be available on “StoHRM” portal.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "When pay slip will be available on portal after salary processed?",
+    "answer": "Pay slip will be available on the portal in 2-3 working days after salary processed on the 1st of month.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "Whom should I contact for query relating to my salary?",
+    "answer": "Employee can reach out to payroll team (aeplpayroll@ascendion.com) for any payroll related query as per the schedule shared for payroll helpdesk.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "How can I check my revised/new CTC?",
+    "answer": "One should check the CTC break up sheet on StoHRM portal for revised CTC instead of referring the payslip (Pay slip shows the amount for present days only).",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "How can I change the salary account?",
+    "answer": "Any change in salary account due to a specific reason and allowed by HR team can be provided to HR team before 15th of the month so that it can be considered in the respective month payroll.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "How can I change or update the profile details available on StoHRM portal?",
+    "answer": "Employee needs to inform HR department with required proof of documents for making any changes in profile. The same will be considered once HR team shares the input in respective payroll month.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "Can I download pay slips every month?",
+    "answer": "Yes, employees can download payroll documents every month and this data will be available for the last 3 calendar years only.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "How can I check whether any arrears amount has been received or not?",
+    "answer": "Any arrears amount (Increment/LOPR) can be seen in pay slip under arrears columns at earning side.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "What happens if I do not submit a PAN Card?",
+    "answer": "If an employee does not submit the PAN card, then form 16 will not be generated and 20% income tax will be deducted from total yearly income.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "How can I check Employer and Employee PF contribution in pay slip?",
+    "answer": "In the pay slip, employee side PF can see at deduction side. Employer PF contribution bifurcation available in pay slip but balance can be seen in PF passbook only from UAN portal.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "How can I enroll in the ESIC scheme?",
+    "answer": "ESIC is applicable to those employees whose gross salary is less than or equal to Rs.21,000 per month at the rate of 0.75% from employee side and 3.25% from employer side on gross salary for 2025.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "What documents are required to avail the benefits of ESI scheme?",
+    "answer": "Employee should have to collect the E-Card from HR/Payroll Department with duly signed by authorized signatory and submit to ESIC dispensary to get admission.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "How can I opt for Voluntary Provident Fund (VPF)?",
+    "answer": "Employee who is already in PF scheme can opt for VPF from date of joining / during tenure whenever employee wants to and the same needs to be informed to GTC Payroll team through mail request send on csplpayroll@collabera.com and payroll team will share the form-4A for further enrollment process.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "When can I declare the investment (ITDF)?",
+    "answer": "Employee can declare the investment on “StoHRM” portal once ITDF (income tax declaration form) tool enables from 1st to 15th of every month. New joiners can do it after the first salary processed and communication mail will be shared separately for ITDF.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "When the form 16 will be available?",
+    "answer": "The form 16 will be available after completion of financial year (April to March). It will be available on the “StoHRM” portal in the month of June.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "What is the difference between the old and new tax regime?",
+    "answer": "Please refer the FAQs on New Tax Regime (PDF) on “StoHRM” portal under download section.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "Whom should I contact if I do not receive the Referral amount?",
+    "answer": "You may please connect with corporate recruitment team",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "How can I access the PF portal?",
+    "answer": "An employee can access the portal through https://unifiedportalmem.epfindia.gov.in/memberinterface/ for PF profile, KYC, transfer request and \nPF passbook can be checked through https://passbook.epfindia.gov.in/MemberPassBook/Login",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "How can an employee apply for Corporate NPS?",
+    "answer": "An employee can apply for corporate NPS through “StoHRM” portal under FBP tool option and payroll team will share the user guide for create new PRAN (Permanent Retirement Account Number) account.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "How can existing PRAN users transfer to corporate NPS?",
+    "answer": "An employee can migrate their existing PRAN to corporate PRAN as per user guide shared by payroll team post applied on “StoHRM” portal.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "How can I access the payroll portal after F&F processed?",
+    "answer": "Employee can access payroll portal by logging as a new registration and enter the personal details asked by the system based on data available in payroll master.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "How can I use Sodexo (Pluxee) Card for tax benefits?",
+    "answer": "Employee should have to login “StoHRM” portal and check Flexi Benefit Plan (FBP) tab where applicable limit and options are available for Meal Card and Gift Card.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "How can I use telephone reimbursement for tax benefit?",
+    "answer": "Employee needs to apply on “StoHRM” portal under FBP tab and select the telephone reimbursement with required month limit as per telephone/mobile postpaid bill usage monthly.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "Whom do I need to contact for more information required for Sodexo Card?",
+    "answer": "Employee must contact Sodexo Customer care services first before reaching out to payroll team.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "When Sodexo card amount will be top up into card?",
+    "answer": "The monthly contribution for Sodexo card will be top-up into card on the day or after 2 days of the salary payment processed. Employee can check the balance in “Pluxee India” mobile application.",
+    "source_sheet": "AEPL - India"
+  },
+  {
+    "question": "What is a salary advance?",
+    "answer": "Salary advance is the amount which is released in a mid-month i.e., monthly incentive, bonus, arrears, LOPR etc. The amount released in mid-month (salary advance) will be reflected in deduction side in pay slip and earning side too if it is earning input/component.",
+    "source_sheet": "AEPL - India"
+  }
+]

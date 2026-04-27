@@ -4,6 +4,8 @@ import re
 from datetime import datetime
 from typing import Any
 
+from metadata.field_registry import FieldRegistry
+
 MONTH_ALIASES = {
     "jan": "Jan",
     "january": "Jan",
@@ -51,6 +53,7 @@ def extract_query_params(query: str) -> dict[str, Any]:
     q = query.lower().strip()
     parsed: dict[str, Any] = {
         "intent": "unknown",
+        "field_request": None,
         "month": None,
         "year": None,
         "compare_prev": False,
@@ -58,15 +61,29 @@ def extract_query_params(query: str) -> dict[str, Any]:
         "raw": query,
     }
 
-    if any(token in q for token in ("salary", "net pay", "pay")) and any(
+    field_request = FieldRegistry.find_field(q)
+    if field_request:
+        parsed["field_request"] = field_request
+        field_meta = FieldRegistry.get_field(field_request) or {}
+        category = field_meta.get("category")
+        if category == "tax":
+            parsed["intent"] = "field_tax"
+        elif category == "deduction":
+            parsed["intent"] = "field_deduction"
+        elif category == "earning":
+            parsed["intent"] = "field_earning"
+        else:
+            parsed["intent"] = "field_total"
+
+    if parsed["field_request"] is None and any(token in q for token in ("salary", "net pay", "pay")) and any(
         token in q for token in ("why", "less", "decrease", "reduced", "drop", "dropped")
     ):
         parsed["intent"] = "salary_explanation"
-    elif any(kw in q for kw in ["night shift", "overtime", "ot ", " ot", "saot"]):
+    elif parsed["field_request"] is None and any(kw in q for kw in ["night shift", "overtime", "ot ", " ot", "saot"]):
         parsed["intent"] = "ot_query"
-    elif any(kw in q for kw in ["allowance", "reimbursement"]):
+    elif parsed["field_request"] is None and any(kw in q for kw in ["allowance", "reimbursement"]):
         parsed["intent"] = "allowance_query"
-    elif any(
+    elif parsed["field_request"] is None and any(
         kw in q
         for kw in [
             "deduction",
@@ -86,12 +103,15 @@ def extract_query_params(query: str) -> dict[str, Any]:
         ]
     ):
         parsed["intent"] = "deduction_query"
-    elif any(kw in q for kw in ["lop", "loss of pay"]):
+    elif parsed["field_request"] is None and any(kw in q for kw in ["lop", "loss of pay"]):
         parsed["intent"] = "lop"
-    elif any(kw in q for kw in ["tax", "tds", "regime"]):
+    elif parsed["field_request"] is None and any(kw in q for kw in ["tax", "tds", "regime"]):
         parsed["intent"] = "tax"
-    elif any(kw in q for kw in ["salary", "net pay", "gross", "payroll", "payslip"]):
+    elif parsed["field_request"] is None and any(kw in q for kw in ["salary", "net pay", "gross", "payroll", "payslip"]):
         parsed["intent"] = "salary"
+        # Extract field specifically
+    if "net taxable" in q or "taxable income" in q:
+        parsed["field_request"] = "net_taxable_income"
 
     if any(
         kw in q
@@ -212,4 +232,20 @@ def normalize_time(parsed: dict[str, Any], now: datetime | None = None) -> dict[
         normalized["previous_month"] = None
         normalized["previous_year"] = None
 
+    normalized["field_request"] = parsed.get("field_request")
+
     return normalized
+
+def execute_with_fallback(table, column, employee_id, month, year):
+    # Try exact month
+    result = query(table, column, employee_id, month, year)
+    
+    if not result:
+        # Fall back to latest available
+        latest = query_latest_available(table, employee_id)
+        return {
+            "result": latest,
+            "fallback": True,
+            "original_month": month,
+            "latest_month": latest_month
+        }

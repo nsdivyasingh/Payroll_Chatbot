@@ -58,20 +58,7 @@ TOOL_SCHEMAS = [
 
 
 def ask_llm(prompt: str, system: str | None = None, temperature: float = 0.1) -> str:
-    full_prompt = prompt if not system else f"System:\n{system}\n\nUser:\n{prompt}"
-    response = requests.post(
-        OLLAMA_URL,
-        json={
-            "model": OLLAMA_MODEL,
-            "prompt": full_prompt,
-            "stream": False,
-            "options": {"temperature": temperature},
-        },
-        timeout=60,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    return payload.get("response", "").strip()
+    return ""
 
 
 def ask_llm_json(prompt: str, system: str | None = None) -> Dict[str, Any]:

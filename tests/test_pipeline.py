@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import chat_service
+from metadata.field_registry import FieldRegistry
 from guardrails import validate_query_scope
 from query_parser import extract_query_params, normalize_time
 from tool_planner import plan_tool, validate_plan
@@ -162,6 +163,24 @@ def test_plan_allowance_routes_correctly() -> None:
 def test_parser_salary_explanation_intent() -> None:
     parsed = extract_query_params("why is my salary less in feb 2026")
     assert parsed["intent"] == "salary_explanation"
+
+
+def test_field_registry_maps_hra() -> None:
+    assert FieldRegistry.find_field("what is my hra for jun 2025") == "hra"
+
+
+def test_planner_uses_get_field_value_for_field_request() -> None:
+    plan = plan_tool(
+        {
+            "intent": "field_earning",
+            "field_request": "hra",
+            "month": "Jun",
+            "year": 2025,
+        },
+        employee_id=15,
+    )
+    assert plan["tool"] == "get_field_value"
+    assert plan["params"]["column"] == "h_r_a"
 
 
 def test_reason_codes_present() -> None:

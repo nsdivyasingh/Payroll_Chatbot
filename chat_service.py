@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from audit_logger import log_audit, log_pipeline
 from faq_engine import retrieve_faq
 from guardrails import validate_query_scope
 from llm_handler import ask_llm
+from metadata.field_registry import FieldRegistry
 from query_parser import extract_query_params, normalize_time
 from tool_planner import plan_tool, validate_plan
 from tools import execute_tool
-from metadata.schema_metadata import SCHEMA_METADATA
+from metadata.schema_metadata import PAYROLL_FIELDS as SCHEMA_METADATA
 
 FALLBACK_MSG = "Couldn't find info, please contact the payroll team."
 
@@ -54,7 +56,9 @@ Tool data:
 Draft response to polish:
 {base_answer}
 """
-    print("PROMPT SENT TO LLM:\n", prompt)
+    if os.getenv("DEBUG_LLM_PROMPT", "").lower() == "true":
+        safe_prompt = prompt.encode("cp1252", errors="replace").decode("cp1252")
+        print("PROMPT SENT TO LLM:\n", safe_prompt)
     answer = ask_llm(prompt, temperature=0.1).strip()
     return answer or base_answer
 
@@ -174,6 +178,41 @@ def _deterministic_format(
     return FALLBACK_MSG
 
 
+def _format_field_response(
+    field_key: str | None,
+    tool_data: dict[str, Any],
+    month: str | None,
+    year: int | None,
+) -> str:
+    if not field_key:
+        return FALLBACK_MSG
+    field_meta = FieldRegistry.get_field(field_key)
+    if not field_meta:
+        return FALLBACK_MSG
+    value = tool_data.get("value")
+    if value in (None, ""):
+        return FALLBACK_MSG
+
+    if field_meta.get("unit") == "amount":
+        formatted_value = format_currency(value)
+    else:
+        formatted_value = str(value)
+
+    response = field_meta.get("response_template", "{value}").format(
+        value=formatted_value,
+        month=month or tool_data.get("month") or "the requested period",
+        year=year or tool_data.get("year") or "",
+    )
+    if tool_data.get("status") == "success_fallback":
+        fallback_to = tool_data.get("fallback_to")
+        original = tool_data.get("original_request")
+        return (
+            f"I don't have payroll records for {original} yet. "
+            f"Here is the latest available month {fallback_to}. {response}"
+        )
+    return response
+
+
 def _safe_format(
     user_query: str,
     tool_name: str,
@@ -181,6 +220,28 @@ def _safe_format(
     plan: dict[str, Any],
     context: str = "",
 ) -> str:
+    if tool_name == "get_field_value":
+        params = plan.get("params", {}) if isinstance(plan, dict) else {}
+        deterministic_answer = _format_field_response(
+            field_key=params.get("field_key"),
+            tool_data=tool_data,
+            month=params.get("month"),
+            year=params.get("year"),
+        )
+        if deterministic_answer == FALLBACK_MSG:
+            return FALLBACK_MSG
+        try:
+            polished = _format_with_llm(
+                query=user_query,
+                tool_data=tool_data,
+                base_answer=deterministic_answer,
+                context=context,
+            )
+            return polished or deterministic_answer
+        except Exception as exc:
+            print(f"LLM polish skipped due to error: {exc}")
+            return deterministic_answer
+
     deterministic_answer = _deterministic_format(
         user_query=user_query,
         tool_name=tool_name,
@@ -277,7 +338,11 @@ def process_user_query(
         log_pipeline({**pipeline_context, "result": result, "stage": "time_validation"})
         log_audit({**event, **result, "stage": "time_validation"})
         return result
-    faq_hit = retrieve_faq(user_query, threshold=0.65)
+
+    # For direct field lookups, bypass FAQ to preserve deterministic field routing.
+    faq_hit = None
+    if not normalized.get("field_request"):
+        faq_hit = retrieve_faq(user_query, threshold=0.65)
     if faq_hit:
         result = {
             "status": "ok",
@@ -305,7 +370,7 @@ def process_user_query(
     pipeline_context["tool_name"] = tool_name
     pipeline_context["tool_result"] = tool_data
 
-    if isinstance(tool_data, dict) and tool_data.get("status") != "success":
+    if isinstance(tool_data, dict) and tool_data.get("status") not in {"success", "success_fallback"}:
         if tool_name == "analyze_salary":
             result = {
                 "status": "fallback",
@@ -323,7 +388,7 @@ def process_user_query(
             "answer": _data_aware_no_data_message(tool_name, plan),
             "source": "payroll",
             "tool_call": plan,
-            "tool_rows": len(tool_data.get("data", [])),
+            "tool_rows": len(tool_data.get("data") or []),
             "tool_result": tool_data,
         }
         log_pipeline({**pipeline_context, "result": result, "stage": "tool_execution"})

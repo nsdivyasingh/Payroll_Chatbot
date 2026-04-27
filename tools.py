@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import text
 
 from query_engine import engine
+from metadata.field_registry import FieldRegistry
 
 ALLOWED_TOOLS = {
     "get_salary",
@@ -14,6 +15,7 @@ ALLOWED_TOOLS = {
     "analyze_salary",
     "get_full_salary_breakdown",
     "get_allowance_breakdown",
+    "get_field_value",
 }
 
 
@@ -370,6 +372,15 @@ def execute_tool(tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
             return get_ot(employee_id=employee_id, month=month, year=year)
         if tool == "get_allowance_breakdown":
             return get_allowance_breakdown(employee_id=employee_id, month=month, year=year)
+        if tool == "get_field_value":
+            return get_field_value(
+                employee_id=employee_id,
+                field_key=params.get("field_key"),
+                table=params.get("table"),
+                column=params.get("column"),
+                month=month,
+                year=year,
+            )
         if tool == "get_full_salary_breakdown":
             return get_full_salary_breakdown(employee_id=employee_id, month=month, year=year)
         return analyze_salary(
@@ -531,3 +542,146 @@ def get_allowance_breakdown(
         "status": "success",
         "data": dict(result)
     }
+
+
+def _month_sort_case(alias: str = "month") -> str:
+    return (
+        f"CASE {alias} "
+        "WHEN 'Jan' THEN 1 WHEN 'Feb' THEN 2 WHEN 'Mar' THEN 3 WHEN 'Apr' THEN 4 "
+        "WHEN 'May' THEN 5 WHEN 'Jun' THEN 6 WHEN 'Jul' THEN 7 WHEN 'Aug' THEN 8 "
+        "WHEN 'Sep' THEN 9 WHEN 'Oct' THEN 10 WHEN 'Nov' THEN 11 WHEN 'Dec' THEN 12 "
+        "ELSE 0 END"
+    )
+
+
+def get_field_value(
+    employee_id: int,
+    field_key: str,
+    table: str,
+    column: str,
+    month: str | None = None,
+    year: int | None = None,
+) -> dict[str, Any]:
+    month, year = _normalize_month_year(month, year)
+    validation_error = _validate_inputs(employee_id, month, year)
+    if validation_error:
+        return {"tool": "get_field_value", **validation_error}
+    if not employee_exists(employee_id):
+        return {
+            "tool": "get_field_value",
+            "status": "no_data",
+            "message": "Employee not found",
+            "data": None,
+        }
+
+    field_meta = FieldRegistry.get_field(str(field_key or ""))
+    if not field_meta:
+        return {
+            "tool": "get_field_value",
+            "status": "error",
+            "message": f"Unknown field '{field_key}'",
+            "data": None,
+        }
+    if table != field_meta["table"] or column != field_meta["column"]:
+        return {
+            "tool": "get_field_value",
+            "status": "error",
+            "message": "Field/table/column mismatch",
+            "data": None,
+        }
+
+    month_case = _month_sort_case("month")
+    month_year = f"{month}-{year}" if month and year is not None else None
+    if month and year is not None:
+        query = text(
+            f"""
+            SELECT {column} AS value, month, eyear
+            FROM {table}
+            WHERE employee_id = :emp_id
+              AND (month = :month OR month = :month_year)
+              AND eyear = :year
+            LIMIT 1
+            """
+        )
+        params = {"emp_id": employee_id, "month": month, "month_year": month_year, "year": year}
+    else:
+        query = text(
+            f"""
+            SELECT {column} AS value, month, eyear
+            FROM {table}
+            WHERE employee_id = :emp_id
+            ORDER BY eyear DESC, {month_case} DESC
+            LIMIT 1
+            """
+        )
+        params = {"emp_id": employee_id}
+
+    print(
+        f"[QUERY] field_value -> field={field_key}, table={table}, column={column}, "
+        f"emp={employee_id}, month={month}, year={year}"
+    )
+    with engine.connect() as conn:
+        row = conn.execute(query, params).mappings().fetchone()
+
+    if not row and month and year is not None:
+        fallback_query = text(
+            f"""
+            SELECT {column} AS value, month, eyear
+            FROM {table}
+            WHERE employee_id = :emp_id
+            ORDER BY eyear DESC, {month_case} DESC
+            LIMIT 1
+            """
+        )
+        with engine.connect() as conn:
+            row = conn.execute(fallback_query, {"emp_id": employee_id}).mappings().fetchone()
+        if row:
+            data = dict(row)
+            fallback_month = str(data.get("month") or "")
+            fallback_year = data.get("eyear")
+            if "-" in fallback_month:
+                fallback_to = fallback_month
+            else:
+                fallback_to = f"{fallback_month}-{fallback_year}"
+            return {
+                "tool": "get_field_value",
+                "status": "success_fallback",
+                "field_key": field_key,
+                "value": data.get("value"),
+                "month": data.get("month"),
+                "year": data.get("eyear"),
+                "fallback_to": fallback_to,
+                "original_request": f"{month}-{year}",
+                "data": data,
+            }
+
+    if not row:
+        return {
+            "tool": "get_field_value",
+            "status": "no_data",
+            "message": f"No data found for {field_key}",
+            "data": None,
+        }
+
+    data = dict(row)
+    return {
+        "tool": "get_field_value",
+        "status": "success",
+        "field_key": field_key,
+        "value": data.get("value"),
+        "month": data.get("month"),
+        "year": data.get("eyear"),
+        "data": data,
+    }
+
+# tools.py - modify get_tax, get_salary, etc.
+def get_salary_with_fallback(employee_id, month, year):
+    result = get_salary(employee_id, month, year)
+    if not result.get("data"):
+        # Try latest
+        latest = get_latest_salary(employee_id)
+        return {
+            **result,
+            "data": latest["data"],
+            "fallback": f"No data for {month}-{year}, showing {latest_month}"
+        }

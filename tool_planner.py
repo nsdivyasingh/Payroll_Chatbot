@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from metadata.field_registry import FieldRegistry
+
 
 def plan_tool(parsed_query: dict, employee_id: int) -> dict:
     intent = parsed_query.get("intent")
+    field_request = parsed_query.get("field_request")
     month = parsed_query.get("month")
     year = parsed_query.get("year")
 
@@ -11,6 +14,19 @@ def plan_tool(parsed_query: dict, employee_id: int) -> dict:
         "month": month,
         "year": year,
     }
+
+    if field_request:
+        field_meta = FieldRegistry.get_field(field_request)
+        if field_meta:
+            return {
+                "tool": "get_field_value",
+                "params": {
+                    **base_params,
+                    "field_key": field_request,
+                    "table": field_meta["table"],
+                    "column": field_meta["column"],
+                },
+            }
 
     # Strict deterministic routing by parsed intent.
     if intent == "salary":
@@ -46,6 +62,8 @@ def validate_plan(plan: dict) -> bool:
         return False
     if params.get("employee_id") in (None, ""):
         return False
+    if tool == "get_field_value":
+        return bool(params.get("field_key") and params.get("table") and params.get("column"))
     # All non-fallback tools need month/year for deterministic period targeting.
     if params.get("month") in (None, "") or params.get("year") in (None, ""):
         return False

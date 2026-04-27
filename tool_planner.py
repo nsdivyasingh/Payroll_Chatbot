@@ -3,7 +3,7 @@ from __future__ import annotations
 from metadata.field_registry import FieldRegistry
 
 
-def plan_tool(parsed_query: dict, employee_id: int) -> dict:
+def plan_tool(parsed_query: dict, employee_id: int, user_query: str = "") -> dict:
     intent = parsed_query.get("intent")
     field_request = parsed_query.get("field_request")
     month = parsed_query.get("month")
@@ -14,6 +14,16 @@ def plan_tool(parsed_query: dict, employee_id: int) -> dict:
         "month": month,
         "year": year,
     }
+
+    if intent == "salary_explanation":
+        return {
+            "tool": "analyze_salary",
+            "params": {
+                **base_params,
+                "previous_month": parsed_query.get("previous_month"),
+                "previous_year": parsed_query.get("previous_year"),
+            },
+        }
 
     if field_request:
         field_meta = FieldRegistry.get_field(field_request)
@@ -40,16 +50,9 @@ def plan_tool(parsed_query: dict, employee_id: int) -> dict:
     if intent == "allowance_query":
         return {"tool": "get_allowance_breakdown", "params": base_params}
     if intent == "deduction_query":
+        if "deduction" in user_query.lower() and "tax" not in user_query.lower():
+            return {"tool": "get_salary", "params": base_params}
         return {"tool": "get_full_salary_breakdown", "params": base_params}
-    if intent == "salary_explanation":
-        return {
-            "tool": "analyze_salary",
-            "params": {
-                **base_params,
-                "previous_month": parsed_query.get("previous_month"),
-                "previous_year": parsed_query.get("previous_year"),
-            },
-        }
     return {"tool": "fallback", "params": {}}
 
 

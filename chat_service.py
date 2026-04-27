@@ -12,9 +12,34 @@ from query_parser import extract_query_params, normalize_time
 from tool_planner import plan_tool, validate_plan
 from tools import execute_tool
 from metadata.schema_metadata import PAYROLL_FIELDS as SCHEMA_METADATA
+from metadata.policy_rules import SYSTEM_POLICIES
+from query_engine import engine
+from sqlalchemy import text
+
+FIELD_DESCRIPTIONS = SCHEMA_METADATA.get("FIELD_DESCRIPTIONS", {})
+RELATIONSHIPS = SCHEMA_METADATA.get("RELATIONSHIPS", {})
+NORMALIZED_FIELDS = SCHEMA_METADATA.get("NORMALIZED_FIELDS", {})
 
 FALLBACK_MSG = "Couldn't find info, please contact the payroll team."
 
+def _get_latest_month_from_db(employee_id: int) -> tuple[str | None, int | None]:
+    query = text("""
+        SELECT month, eyear 
+        FROM pay_register 
+        WHERE employee_id = :emp_id 
+        ORDER BY eyear DESC, 
+            CASE month 
+                WHEN 'Jan' THEN 1 WHEN 'Feb' THEN 2 WHEN 'Mar' THEN 3 WHEN 'Apr' THEN 4 
+                WHEN 'May' THEN 5 WHEN 'Jun' THEN 6 WHEN 'Jul' THEN 7 WHEN 'Aug' THEN 8 
+                WHEN 'Sep' THEN 9 WHEN 'Oct' THEN 10 WHEN 'Nov' THEN 11 WHEN 'Dec' THEN 12 ELSE 0 
+            END DESC 
+        LIMIT 1
+    """)
+    with engine.connect() as conn:
+        row = conn.execute(query, {"emp_id": employee_id}).fetchone()
+        if row:
+            return row[0], row[1]
+    return None, None
 
 def _build_recent_context(history: list[dict[str, Any]] | None, limit: int = 3) -> str:
     if not history:
@@ -28,6 +53,22 @@ def _build_recent_context(history: list[dict[str, Any]] | None, limit: int = 3) 
             lines.append(f"{role}: {content}")
     return "\n".join(lines)
 
+def normalize_tool_data(data):
+    normalized = {}
+
+    for key, value in data.items():
+        mapped = False
+
+        for canonical, variants in NORMALIZED_FIELDS.items():
+            if key in variants:
+                normalized[canonical] = value
+                mapped = True
+                break
+
+        if not mapped:
+            normalized[key] = value
+
+    return normalized
 
 def _format_with_llm(
     query: str,
@@ -38,16 +79,23 @@ def _format_with_llm(
     print("=== USING LLM ===")
     context_block = f"Previous context:\n{context}\n\n" if context else ""
     schema_context = str(SCHEMA_METADATA)
+    policy_context = str(SYSTEM_POLICIES)
     prompt = f"""
+Follow these system rules strictly:
+
+{policy_context}
+
 You are a payroll assistant.
 
-Here is the database schema and meaning of fields:
-{schema_context}
+Field meanings:
+{FIELD_DESCRIPTIONS}
 
-Use this information to better understand payroll terms.
-Rewrite the response in a concise, professional tone without changing facts, values, periods, or conclusions.
+Important relationships:
+{RELATIONSHIPS}
 
-{context_block}User question:
+Use this to explain answers clearly.
+
+User query:
 {query}
 
 Tool data:
@@ -120,32 +168,14 @@ def _deterministic_format(
         )
 
     if tool_name == "analyze_salary":
-        payload = tool_data.get("data", {}) if isinstance(tool_data, dict) else {}
-        current = payload.get("current_salary", {}).get("data", [])
-        previous = payload.get("previous_salary", {}).get("data", [])
-        reasons = payload.get("reason_codes", {})
-        if not current or not previous:
-            return FALLBACK_MSG
-        curr = current[0]
-        prev = previous[0]
-        primary_reason = str(reasons.get("primary_reason", "deductions"))
-        reason_text = {
-            "tax": "an increase in tax deductions",
-            "lop": "loss of pay (LOP) impact",
-            "deductions": "an increase in overall deductions",
-        }.get(primary_reason, "changes in deductions")
-        lop_impact = reasons.get("lop_impact", 0) or 0
-        lop_suffix = (
-            " There was no LOP impact."
-            if float(lop_impact) == 0
-            else f" LOP impact was {lop_impact} day(s)."
-        )
-        change = float(reasons.get("netpay_delta", 0) or 0)
-        direction = "decreased" if change < 0 else "increased" if change > 0 else "changed"
-        return (
-            f"Your salary {direction} in {curr.get('month')} {curr.get('eyear')} compared to "
-            f"{prev.get('month')} {prev.get('eyear')} due to {reason_text}.{lop_suffix}"
-        )
+        data = tool_data.get("data", {})
+        primary = data.get("primary_reason")
+        reasons = data.get("reasons", [])
+        response = ""
+        if primary:
+            response += f"Your salary decreased primarily due to {primary}. "
+        response += " ".join(reasons)
+        return response.strip()
 
     rows = tool_data.get("data", []) if isinstance(tool_data, dict) else []
     if tool_name == "get_salary" and rows:
@@ -196,6 +226,8 @@ def _format_field_response(
     if field_meta.get("unit") == "amount":
         formatted_value = format_currency(value)
     else:
+        if field_key == "tax_regime":
+            value = SYSTEM_POLICIES["tax_regime_mapping"].get(value, value)
         formatted_value = str(value)
 
     response = field_meta.get("response_template", "{value}").format(
@@ -274,37 +306,10 @@ def _data_aware_no_data_message(tool_name: str, plan: dict[str, Any]) -> str:
 
 
 def _summarize_analyze_result(tool_data: dict[str, Any]) -> str:
-    payload = tool_data.get("data", {})
-    current = payload.get("current_salary", {})
-    previous = payload.get("previous_salary", {})
-    reason_codes = payload.get("reason_codes", {}) if isinstance(payload, dict) else {}
-
-    current_row = (current.get("data") or [None])[0] if isinstance(current, dict) else None
-    previous_row = (previous.get("data") or [None])[0] if isinstance(previous, dict) else None
-    if not current_row:
-        return _smart_analyze_no_data_message(tool_data)
-
-    current_net = current_row.get("total_netpay")
-    current_period = f"{current_row.get('month')}-{current_row.get('eyear')}"
-    if previous_row:
-        previous_net = previous_row.get("total_netpay")
-        previous_period = f"{previous_row.get('month')}-{previous_row.get('eyear')}"
-        delta = reason_codes.get("netpay_delta")
-        if delta is None:
-            delta = current_net - previous_net
-        direction = "increased" if delta > 0 else "decreased" if delta < 0 else "stayed the same"
-        return (
-            f"Your net salary is {current_net} for {current_period}, compared to {previous_net} for "
-            f"{previous_period} (it {direction} by {abs(delta)}). "
-            f"LOP impact days: {reason_codes.get('lop_impact')}. "
-            f"Tax delta: {reason_codes.get('tax_delta')}. "
-            f"Deduction delta: {reason_codes.get('deduction_delta')}."
-        )
-
-    return (
-        f"Your current salary for {current_period} is {current_net}. Previous month data is unavailable, "
-        "so a full comparison cannot be completed."
-    )
+    reasons = tool_data.get("data", {}).get("reasons", [])
+    if not reasons:
+        return "Your salary change does not show significant variation."
+    return " ".join(reasons)
 
 
 def process_user_query(
@@ -315,6 +320,19 @@ def process_user_query(
         "query": user_query,
     }
 
+    # ENFORCE SECURITY
+    if "employee" in user_query.lower() and str(employee_id) not in user_query:
+        result = {"status": "blocked", "answer": SYSTEM_POLICIES["employee_scope"]["response"], "source": "payroll"}
+        log_audit({**event, **result, "stage": "security_policy"})
+        return result
+
+    # BLOCK PERSONAL DATA
+    personal_keywords = ["pf code", "name", "bank", "pan", "ifsc"]
+    if any(word in user_query.lower() for word in personal_keywords):
+        result = {"status": "blocked", "answer": SYSTEM_POLICIES["personal_data_block"]["response"], "source": "payroll"}
+        log_audit({**event, **result, "stage": "security_policy"})
+        return result
+
     allowed, reason = validate_query_scope(user_query)
     if not allowed:
         result = {"status": "blocked", "answer": reason}
@@ -322,6 +340,14 @@ def process_user_query(
         return result
 
     parsed = extract_query_params(user_query)
+    
+    # DEFAULT MONTH LOGIC
+    if not parsed.get("month"):
+        m, y = _get_latest_month_from_db(employee_id)
+        if m and y:
+            parsed["month"] = m
+            parsed["year"] = y
+
     normalized = normalize_time(parsed)
     pipeline_context: dict[str, Any] = {
         "employee_id": employee_id,
@@ -352,7 +378,7 @@ def process_user_query(
         log_audit({**event, **result, "stage": "faq"})
         return result
 
-    plan = plan_tool(normalized, employee_id)
+    plan = plan_tool(normalized, employee_id, user_query)
     tool_name = plan.get("tool")
     pipeline_context["plan"] = plan
     if tool_name == "fallback" or not validate_plan(plan):

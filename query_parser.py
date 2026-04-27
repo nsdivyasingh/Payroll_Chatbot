@@ -75,9 +75,7 @@ def extract_query_params(query: str) -> dict[str, Any]:
         else:
             parsed["intent"] = "field_total"
 
-    if parsed["field_request"] is None and any(token in q for token in ("salary", "net pay", "pay")) and any(
-        token in q for token in ("why", "less", "decrease", "reduced", "drop", "dropped")
-    ):
+    if "salary" in q and any(word in q for word in ["why", "less", "reduced", "decrease", "deduction"]):
         parsed["intent"] = "salary_explanation"
     elif parsed["field_request"] is None and any(kw in q for kw in ["night shift", "overtime", "ot ", " ot", "saot"]):
         parsed["intent"] = "ot_query"

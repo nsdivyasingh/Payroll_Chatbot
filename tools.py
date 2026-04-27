@@ -71,7 +71,7 @@ def get_salary(employee_id: int, month: str | None = None, year: int | None = No
     if month and year is not None:
         query = text(
             """
-            SELECT month, eyear, total_netpay, gross_earning, gross_deduction
+            SELECT month, eyear, total_netpay, gross_earning, gross_deduction, income_tax_ded
             FROM pay_register
             WHERE employee_id = :emp_id
             AND month = :month
@@ -84,7 +84,7 @@ def get_salary(employee_id: int, month: str | None = None, year: int | None = No
     elif month:
         query = text(
             """
-            SELECT month, eyear, total_netpay, gross_earning, gross_deduction
+            SELECT month, eyear, total_netpay, gross_earning, gross_deduction, income_tax_ded
             FROM pay_register
             WHERE employee_id = :emp_id AND month = :month
             ORDER BY eyear DESC, month DESC
@@ -95,7 +95,7 @@ def get_salary(employee_id: int, month: str | None = None, year: int | None = No
     else:
         query = text(
             """
-            SELECT month, eyear, total_netpay, gross_earning, gross_deduction
+            SELECT month, eyear, total_netpay, gross_earning, gross_deduction, income_tax_ded
             FROM pay_register
             WHERE employee_id = :emp_id
             ORDER BY eyear DESC, month DESC
@@ -269,82 +269,71 @@ def _first_row(payload: dict[str, Any]) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-def analyze_salary(
-    employee_id: int,
-    month: str | None,
-    year: int | None,
-    previous_month: str | None,
-    previous_year: int | None,
-) -> dict[str, Any]:
-    print(
-        f"[QUERY] analyze_salary -> emp={employee_id}, month={month}, year={year}, "
-        f"prev_month={previous_month}, prev_year={previous_year}"
-    )
-    current = get_salary(employee_id=employee_id, month=month, year=year)
-    previous = get_salary(employee_id=employee_id, month=previous_month, year=previous_year)
-    lop = get_lop(employee_id=employee_id, month=month, year=year)
-    tax = get_tax(employee_id=employee_id, month=month, year=year)
-    previous_tax = get_tax(employee_id=employee_id, month=previous_month, year=previous_year)
+def analyze_salary(employee_id, month, year, previous_month, previous_year):
 
-    current_row = _first_row(current) or {}
-    previous_row = _first_row(previous) or {}
-    tax_current_row = _first_row(tax) or {}
-    tax_previous_row = _first_row(previous_tax) or {}
-    lop_rows = lop.get("data", []) if isinstance(lop, dict) else []
+    current = get_salary(employee_id, month, year)
+    previous = get_salary(employee_id, previous_month, previous_year)
 
-    netpay_delta = None
-    deduction_delta = None
-    tax_delta = None
-    if current_row and previous_row:
-        netpay_delta = current_row.get("total_netpay", 0) - previous_row.get("total_netpay", 0)
-        deduction_delta = current_row.get("gross_deduction", 0) - previous_row.get("gross_deduction", 0)
-    if tax_current_row and tax_previous_row:
-        tax_delta = tax_current_row.get("total_tax_liability", 0) - tax_previous_row.get("total_tax_liability", 0)
-    lop_impact = sum(float(row.get("lop_days", 0) or 0) for row in lop_rows)
-    primary_reason = None
-    safe_tax_delta = tax_delta if tax_delta is not None else 0
-    safe_deduction_delta = deduction_delta if deduction_delta is not None else 0
-    if abs(safe_tax_delta) > abs(safe_deduction_delta):
-        primary_reason = "tax"
-    elif lop_impact > 0:
-        primary_reason = "lop"
-    else:
-        primary_reason = "deductions"
+    tax_current = get_tax(employee_id, month, year)
+    tax_previous = get_tax(employee_id, previous_month, previous_year)
 
-    reason_codes = {
-        "netpay_delta": netpay_delta,
-        "deduction_delta": deduction_delta,
-        "tax_delta": tax_delta,
-        "lop_impact": lop_impact,
-        "primary_reason": primary_reason,
-    }
+    lop_current = get_lop(employee_id, month, year)
 
     if current.get("status") != "success":
-        return {
-            "tool": "analyze_salary",
-            "status": "no_data",
-            "message": "No salary data found for analysis",
-            "data": {
-                "current_salary": current,
-                "previous_salary": previous,
-                "lop": lop,
-                "tax": tax,
-                "previous_tax": previous_tax,
-                "reason_codes": reason_codes,
-            },
-        }
+        return {"tool": "analyze_salary", "status": "no_data"}
+
+    curr = current["data"][0]
+    prev = previous["data"][0] if previous.get("status") == "success" else None
+
+    reasons = []
+    primary_reason = None
+    tax_delta = 0
+    ded_delta = 0
+    lop_days = 0
+
+    if not prev:
+        reasons.append("Previous month data is not available for comparison, so analysis is based only on current salary components.")
+    else:
+        # 🔥 1. NET PAY CHANGE
+        delta = curr.get("total_netpay", 0) - prev.get("total_netpay", 0)
+        if delta < 0:
+            reasons.append(f"Your net salary decreased by {abs(delta)} compared to previous month.")
+
+        # 🔥 2. TAX IMPACT
+        tax_delta = curr.get("income_tax_ded", 0) - prev.get("income_tax_ded", 0)
+        if tax_delta > 0:
+            reasons.append("There was an increase in tax deductions.")
+
+        # 🔥 4. DEDUCTION CHANGE
+        ded_delta = curr.get("gross_deduction", 0) - prev.get("gross_deduction", 0)
+        if ded_delta > 0:
+            reasons.append("Your total deductions increased.")
+
+    # 🔥 3. LOP IMPACT
+    if lop_current.get("status") == "success":
+        lop_days = sum(float(row.get("lop_days", 0) or 0) for row in lop_current["data"])
+        if lop_days > 0:
+            reasons.append(f"You had {lop_days} LOP days affecting your salary.")
+    elif lop_current.get("status") == "no_data":
+        reasons.append("There was no loss of pay affecting your salary.")
+
+    # PRIMARY REASON PRIORITY
+    if tax_delta > 0:
+        primary_reason = "an increase in tax deductions"
+    elif ded_delta > 0:
+        primary_reason = "an increase in total deductions"
+    elif lop_days > 0:
+        primary_reason = "loss of pay (LOP)"
 
     return {
         "tool": "analyze_salary",
         "status": "success",
         "data": {
-            "current_salary": current,
-            "previous_salary": previous,
-            "lop": lop,
-            "tax": tax,
-            "previous_tax": previous_tax,
-            "reason_codes": reason_codes,
-        },
+            "current": curr,
+            "previous": prev,
+            "reasons": reasons,
+            "primary_reason": primary_reason
+        }
     }
 
 
@@ -537,10 +526,20 @@ def get_allowance_breakdown(
             "data": {},
         }
 
+    data = dict(result)
+    
+    total_allowance = sum([
+        float(data.get("bonus") or 0),
+        float(data.get("incentive") or 0),
+        float(data.get("other_allowance") or 0),
+        float(data.get("night_shift_all") or 0),
+    ])
+    data["total_allowance"] = total_allowance
+
     return {
         "tool": "get_allowance_breakdown",
         "status": "success",
-        "data": dict(result)
+        "data": data
     }
 
 

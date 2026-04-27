@@ -22,7 +22,7 @@ def plan_tool(parsed_query: dict, employee_id: int) -> dict:
         return {"tool": "get_ot", "params": base_params}
     if intent == "deduction_query":
         return {"tool": "get_full_salary_breakdown", "params": base_params}
-    if intent == "salary_explanation":
+    elif intent == "salary_explanation":
         return {
             "tool": "analyze_salary",
             "params": {

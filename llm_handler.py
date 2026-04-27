@@ -4,7 +4,7 @@ from typing import Any, Dict
 import requests
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3"
+OLLAMA_MODEL = "phi3"
 
 TOOL_SCHEMAS = [
     {

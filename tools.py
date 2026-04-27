@@ -407,6 +407,7 @@ def get_full_salary_breakdown(
             "data": {},
         }
 
+    month_year = f"{month}-{year}"
     query = """
     SELECT 
         basic,
@@ -421,8 +422,7 @@ def get_full_salary_breakdown(
         total_netpay
     FROM pay_register_raw
     WHERE employee_id = :emp_id
-      AND month = :month
-      AND eyear = :year
+      AND month = :month_year
     """
 
     print(f"[QUERY] full_breakdown -> emp={employee_id}, month={month}, year={year}")
@@ -432,13 +432,14 @@ def get_full_salary_breakdown(
                 text(query),
                 {
                     "emp_id": employee_id,
-                    "month": month,
-                    "year": year,
+                    "month_year": month_year,
                 },
             )
             .mappings()
             .fetchone()
         )
+    print("DEBUG PARAMS:", employee_id, month, year)
+    print("DEBUG RESULT:", result)
 
     if not result:
         return {
@@ -470,4 +471,37 @@ def get_full_salary_breakdown(
             "gross_deduction": data.get("gross_deduction"),
             "netpay": data.get("total_netpay"),
         },
+    }   
+
+def get_allowance_breakdown(employee_id, month, year):
+    month_year = f"{month}-{year}"
+
+    query = """
+    SELECT 
+        other_allowance,
+        bonus,
+        incentive,
+        night_shift_all
+    FROM pay_register_raw
+    WHERE employee_id = :emp_id
+      AND month = :month_year
+    """
+
+    with engine.connect() as conn:
+        result = conn.execute(
+            text(query),
+            {"emp_id": employee_id, "month_year": month_year}
+        ).mappings().fetchone()
+
+    if not result:
+        return {"status": "no_data"}
+    elif "allowance" in query:
+        return {
+            "tool": "get_allowance_breakdown",
+            "params": {...}
+        }
+
+    return {
+        "status": "success",
+        "data": dict(result)
     }

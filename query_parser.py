@@ -58,8 +58,8 @@ def extract_query_params(query: str) -> dict[str, Any]:
         "raw": query,
     }
 
-    if any(kw in q for kw in ["why", "less than", "reduced", "drop", "decrease"]):
-        parsed["intent"] = "salary_explanation"
+    if "salary" in q and ("why" in q or "less" in q or "decrease" in q):
+        intent = "salary_explanation"
     elif any(kw in q for kw in ["night shift", "overtime", "ot ", " ot", "saot"]):
         parsed["intent"] = "ot_query"
     elif any(kw in q for kw in ["allowance", "reimbursement"]):

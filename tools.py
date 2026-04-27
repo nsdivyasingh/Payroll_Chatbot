@@ -6,7 +6,14 @@ from sqlalchemy import text
 
 from query_engine import engine
 
-ALLOWED_TOOLS = {"get_salary", "get_lop", "get_tax", "get_ot", "analyze_salary"}
+ALLOWED_TOOLS = {
+    "get_salary",
+    "get_lop",
+    "get_tax",
+    "get_ot",
+    "analyze_salary",
+    "get_full_salary_breakdown",
+}
 
 
 def _normalize_month_year(month: str | None, year: int | None) -> tuple[str | None, int | None]:
@@ -63,7 +70,9 @@ def get_salary(employee_id: int, month: str | None = None, year: int | None = No
             """
             SELECT month, eyear, total_netpay, gross_earning, gross_deduction
             FROM pay_register
-            WHERE employee_id = :emp_id AND month = :month AND eyear = :year
+            WHERE employee_id = :emp_id
+            AND month = :month
+            AND eyear = :year
             ORDER BY eyear DESC, month DESC
             LIMIT 3
             """
@@ -252,6 +261,11 @@ def get_ot(employee_id: int, month: str | None = None, year: int | None = None) 
     return {"tool": "get_ot", "status": "success", "data": rows}
 
 
+def _first_row(payload: dict[str, Any]) -> dict[str, Any] | None:
+    rows = payload.get("data", []) if isinstance(payload, dict) else []
+    return rows[0] if rows else None
+
+
 def analyze_salary(
     employee_id: int,
     month: str | None,
@@ -267,6 +281,40 @@ def analyze_salary(
     previous = get_salary(employee_id=employee_id, month=previous_month, year=previous_year)
     lop = get_lop(employee_id=employee_id, month=month, year=year)
     tax = get_tax(employee_id=employee_id, month=month, year=year)
+    previous_tax = get_tax(employee_id=employee_id, month=previous_month, year=previous_year)
+
+    current_row = _first_row(current) or {}
+    previous_row = _first_row(previous) or {}
+    tax_current_row = _first_row(tax) or {}
+    tax_previous_row = _first_row(previous_tax) or {}
+    lop_rows = lop.get("data", []) if isinstance(lop, dict) else []
+
+    netpay_delta = None
+    deduction_delta = None
+    tax_delta = None
+    if current_row and previous_row:
+        netpay_delta = current_row.get("total_netpay", 0) - previous_row.get("total_netpay", 0)
+        deduction_delta = current_row.get("gross_deduction", 0) - previous_row.get("gross_deduction", 0)
+    if tax_current_row and tax_previous_row:
+        tax_delta = tax_current_row.get("total_tax_liability", 0) - tax_previous_row.get("total_tax_liability", 0)
+    lop_impact = sum(float(row.get("lop_days", 0) or 0) for row in lop_rows)
+    primary_reason = None
+    safe_tax_delta = tax_delta if tax_delta is not None else 0
+    safe_deduction_delta = deduction_delta if deduction_delta is not None else 0
+    if abs(safe_tax_delta) > abs(safe_deduction_delta):
+        primary_reason = "tax"
+    elif lop_impact > 0:
+        primary_reason = "lop"
+    else:
+        primary_reason = "deductions"
+
+    reason_codes = {
+        "netpay_delta": netpay_delta,
+        "deduction_delta": deduction_delta,
+        "tax_delta": tax_delta,
+        "lop_impact": lop_impact,
+        "primary_reason": primary_reason,
+    }
 
     if current.get("status") != "success":
         return {
@@ -278,6 +326,8 @@ def analyze_salary(
                 "previous_salary": previous,
                 "lop": lop,
                 "tax": tax,
+                "previous_tax": previous_tax,
+                "reason_codes": reason_codes,
             },
         }
 
@@ -289,6 +339,8 @@ def analyze_salary(
             "previous_salary": previous,
             "lop": lop,
             "tax": tax,
+            "previous_tax": previous_tax,
+            "reason_codes": reason_codes,
         },
     }
 
@@ -306,18 +358,116 @@ def execute_tool(tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
     employee_id = params.get("employee_id")
     month = params.get("month")
     year = params.get("year")
-    if tool == "get_salary":
-        return get_salary(employee_id=employee_id, month=month, year=year)
-    if tool == "get_lop":
-        return get_lop(employee_id=employee_id, month=month, year=year)
-    if tool == "get_tax":
-        return get_tax(employee_id=employee_id, month=month, year=year)
-    if tool == "get_ot":
-        return get_ot(employee_id=employee_id, month=month, year=year)
-    return analyze_salary(
-        employee_id=employee_id,
-        month=month,
-        year=year,
-        previous_month=params.get("previous_month"),
-        previous_year=params.get("previous_year"),
-    )
+    try:
+        if tool == "get_salary":
+            return get_salary(employee_id=employee_id, month=month, year=year)
+        if tool == "get_lop":
+            return get_lop(employee_id=employee_id, month=month, year=year)
+        if tool == "get_tax":
+            return get_tax(employee_id=employee_id, month=month, year=year)
+        if tool == "get_ot":
+            return get_ot(employee_id=employee_id, month=month, year=year)
+        if tool == "get_full_salary_breakdown":
+            return get_full_salary_breakdown(employee_id=employee_id, month=month, year=year)
+        return analyze_salary(
+            employee_id=employee_id,
+            month=month,
+            year=year,
+            previous_month=params.get("previous_month"),
+            previous_year=params.get("previous_year"),
+        )
+    except Exception as exc:
+        return {
+            "tool": tool_name,
+            "status": "error",
+            "message": str(exc),
+            "data": [],
+        }
+
+
+def get_full_salary_breakdown(
+    employee_id: int, month: str | None = None, year: int | None = None
+) -> dict[str, Any]:
+    month, year = _normalize_month_year(month, year)
+    validation_error = _validate_inputs(employee_id, month, year)
+    if validation_error:
+        return {"tool": "get_full_salary_breakdown", **validation_error}
+    if not employee_exists(employee_id):
+        return {
+            "tool": "get_full_salary_breakdown",
+            "status": "no_data",
+            "message": "Employee not found",
+            "data": {},
+        }
+    if month is None or year is None:
+        return {
+            "tool": "get_full_salary_breakdown",
+            "status": "error",
+            "message": "month and year are required for detailed breakdown",
+            "data": {},
+        }
+
+    query = """
+    SELECT 
+        basic,
+        h_r_a,
+        bonus,
+        other_allowance,
+        pt_ded,
+        pf_ded,
+        income_tax_ded,
+        other_ded_2_ded,
+        gross_deduction,
+        total_netpay
+    FROM pay_register_raw
+    WHERE employee_id = :emp_id
+      AND month = :month
+      AND eyear = :year
+    """
+
+    print(f"[QUERY] full_breakdown -> emp={employee_id}, month={month}, year={year}")
+    with engine.connect() as conn:
+        result = (
+            conn.execute(
+                text(query),
+                {
+                    "emp_id": employee_id,
+                    "month": month,
+                    "year": year,
+                },
+            )
+            .mappings()
+            .fetchone()
+        )
+
+    if not result:
+        return {
+            "tool": "get_full_salary_breakdown",
+            "status": "no_data",
+            "message": "No breakdown data found",
+            "data": {},
+        }
+
+    data = dict(result)
+    earnings = {
+        "Basic": data.get("basic"),
+        "HRA": data.get("h_r_a"),
+        "Bonus": data.get("bonus"),
+        "Other Allowance": data.get("other_allowance"),
+    }
+    deductions = {
+        "PF": data.get("pf_ded"),
+        "PT": data.get("pt_ded"),
+        "Income Tax": data.get("income_tax_ded"),
+        "Other": data.get("other_ded_2_ded"),
+    }
+    return {
+        "tool": "get_full_salary_breakdown",
+        "status": "success",
+        "data": {
+            "earnings": earnings,
+            "deductions": deductions,
+            "gross_deduction": data.get("gross_deduction"),
+            "netpay": data.get("total_netpay"),
+        },
+    }

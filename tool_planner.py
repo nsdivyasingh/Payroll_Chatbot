@@ -21,7 +21,7 @@ def plan_tool(parsed_query: dict, employee_id: int) -> dict:
     if intent in {"ot_query", "allowance_query"}:
         return {"tool": "get_ot", "params": base_params}
     if intent == "deduction_query":
-        return {"tool": "get_salary", "params": base_params}
+        return {"tool": "get_full_salary_breakdown", "params": base_params}
     if intent == "salary_explanation":
         return {
             "tool": "analyze_salary",
@@ -50,3 +50,5 @@ def validate_plan(plan: dict) -> bool:
         if params.get("previous_month") in (None, "") or params.get("previous_year") in (None, ""):
             return False
     return True
+
+

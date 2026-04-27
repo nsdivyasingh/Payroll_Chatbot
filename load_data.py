@@ -7,6 +7,13 @@ engine = create_engine(DATABASE_URL)
 file_path = "payroll_data.xlsx"
 
 with engine.begin() as conn:
+    conn.execute(
+        text(
+            """
+            DROP TABLE IF EXISTS pay_register, tax_data, lop_data, ot_data CASCADE
+            """
+        )
+    )
     with open("schema.sql", "r") as f:
         conn.execute(text(f.read()))
 
@@ -23,7 +30,14 @@ tax_df = pd.read_excel(file_path, sheet_name="ITax Reco")
 # 2. Clean Columns
 # -------------------------------
 def clean_columns(df):
-    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
+    normalized = (
+        df.columns.astype(str)
+        .str.strip()
+        .str.lower()
+        .str.replace(r"[^a-z0-9]+", "_", regex=True)
+        .str.strip("_")
+    )
+    df.columns = normalized
     return df
 
 pay_df = clean_columns(pay_df)
@@ -186,6 +200,76 @@ tax_raw_df = apply_mapping(tax_df.copy())
 pay_summary_df = apply_mapping(pay_summary_df)
 tax_summary_df = apply_mapping(tax_summary_df)
 
+pay_register_columns = [
+    "employee_id",
+    "employee_code",
+    "month",
+    "emonth",
+    "eyear",
+    "code_wday",
+    "lopd",
+    "actdays",
+    "arrdays",
+    "total_paid_days",
+    "leavenchdays",
+    "notpaydays",
+    "notdeddays",
+    "ot_hrs",
+    "basic",
+    "h_r_a",
+    "lta",
+    "gratuity",
+    "leave_encash",
+    "mange_allow",
+    "bonus",
+    "other_allowance",
+    "yearly_bonus",
+    "incentive",
+    "night_shift_all",
+    "sign_tenure_bon",
+    "nontax",
+    "referal_bonus",
+    "notice_per_pay",
+    "misc_earn",
+    "salary_advance",
+    "tele_reimb",
+    "joibon",
+    "serweigh",
+    "relocation",
+    "prof_developmnt",
+    "maternity_bonus",
+    "gross_earning",
+    "pt_ded",
+    "pf_ded",
+    "esi_employee_ded",
+    "vpf_ded",
+    "income_tax_ded",
+    "l_w_f_ded",
+    "sal_adv_ded",
+    "notice_per_ded_ded",
+    "medical_ins_par_ded",
+    "oth_dedu_ded",
+    "other_ded_2_ded",
+    "gross_deduction",
+    "total_netpay",
+    "remark",
+]
+
+# Build a full-fidelity pay register table with stable column contract.
+pay_register_df = split_month_year(pay_raw_df.copy())
+pay_register_df["month"] = pay_register_df["month_clean"]
+pay_register_df["emonth"] = pay_register_df["month_clean"]
+pay_register_df["eyear"] = pd.to_numeric(pay_register_df["year_clean"], errors="coerce")
+pay_register_df.drop(columns=["month_clean", "year_clean"], inplace=True)
+
+for col in pay_register_columns:
+    if col not in pay_register_df.columns:
+        pay_register_df[col] = None
+
+pay_register_df = pay_register_df[pay_register_columns]
+pay_register_df.dropna(subset=["employee_id", "month", "eyear"], inplace=True)
+pay_register_df["eyear"] = pay_register_df["eyear"].astype(int)
+
 # Strict column contracts for summary tables.
 pay_summary_df = pay_summary_df[
     [
@@ -237,7 +321,7 @@ ot_raw_df.to_sql("ot_data_raw", engine, if_exists="replace", index=False, method
 tax_raw_df.to_sql("tax_data_raw", engine, if_exists="replace", index=False, method="multi")
 
 # CURATED (append)
-pay_summary_df.to_sql("pay_register", engine, if_exists="append", index=False, method="multi")
+pay_register_df.to_sql("pay_register", engine, if_exists="append", index=False, method="multi")
 tax_summary_df.to_sql("tax_data", engine, if_exists="append", index=False, method="multi")
 
 # TRACKERS (full-fidelity replace)

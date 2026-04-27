@@ -64,7 +64,10 @@ def extract_query_params(query: str) -> dict[str, Any]:
         parsed["intent"] = "ot_query"
     elif any(kw in q for kw in ["allowance", "reimbursement"]):
         parsed["intent"] = "allowance_query"
-    elif any(kw in q for kw in ["deduction", "deductions", "pf", "pt", "tax deduction"]):
+    elif any(
+        kw in q
+        for kw in ["deduction", "deductions", "pf", "pt", "tax deduction", "earning", "earnings"]
+    ):
         parsed["intent"] = "deduction_query"
     elif any(kw in q for kw in ["lop", "loss of pay"]):
         parsed["intent"] = "lop"

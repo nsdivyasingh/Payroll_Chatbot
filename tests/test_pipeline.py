@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import chat_service
+from guardrails import validate_query_scope
 from query_parser import extract_query_params, normalize_time
 from tool_planner import plan_tool, validate_plan
-from tools import execute_tool, get_salary
+from tools import analyze_salary, execute_tool, get_salary
 
 
 FIXED_NOW = datetime(2026, 4, 24)
@@ -84,3 +86,73 @@ def test_full_pipeline_salary() -> None:
 
     assert plan["tool"] == "get_salary"
     assert result["status"] in ["success", "no_data"]
+
+
+def test_future_date_rejected() -> None:
+    parsed = extract_query_params("salary in 2030")
+    normalized = normalize_time(parsed, now=FIXED_NOW)
+    assert normalized["time_valid"] is False
+    assert "future dates" in normalized["time_error"]
+
+
+def test_guardrail_blocks_cross_employee_query() -> None:
+    allowed, message = validate_query_scope("salary of employee 5")
+    assert allowed is False
+    assert "own payroll details" in message
+
+
+def test_no_data_message_is_data_aware() -> None:
+    plan = {"params": {"month": "Mar", "year": 2026}}
+    msg = chat_service._data_aware_no_data_message("get_salary", plan)
+    assert msg == "No salary data available for Mar 2026."
+
+
+def test_partial_reasoning_message_when_previous_missing() -> None:
+    tool_data = {
+        "data": {
+            "current_salary": {
+                "status": "success",
+                "data": [{"month": "Feb", "eyear": 2026, "total_netpay": 148759}],
+            },
+            "previous_salary": {"status": "no_data", "data": []},
+            "lop": {"status": "no_data", "data": []},
+            "tax": {"status": "success", "data": [{"month": "Feb", "eyear": 2026}]},
+        }
+    }
+    msg = chat_service._summarize_analyze_result(tool_data)
+    assert "Previous month data is unavailable" in msg
+
+
+def test_safe_format_falls_back_when_llm_fails(monkeypatch) -> None:
+    def raise_llm(*args, **kwargs):
+        raise RuntimeError("llm down")
+
+    monkeypatch.setattr(chat_service, "ask_llm", raise_llm)
+    msg = chat_service._safe_format(
+        "salary in jan",
+        "get_salary",
+        {
+            "data": [
+                {
+                    "month": "Jan",
+                    "eyear": 2026,
+                    "total_netpay": 148760,
+                    "gross_earning": 190998,
+                    "gross_deduction": 42238,
+                }
+            ]
+        },
+    )
+    assert "Your salary for Jan-2026 is 148760" in msg
+
+
+def test_reason_codes_present() -> None:
+    result = analyze_salary(
+        employee_id=3,
+        month="Feb",
+        year=2026,
+        previous_month="Jan",
+        previous_year=2026,
+    )
+    assert "reason_codes" in result["data"]
+    assert result["data"]["reason_codes"]["primary_reason"] in {"tax", "lop", "deductions"}

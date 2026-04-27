@@ -13,6 +13,7 @@ ALLOWED_TOOLS = {
     "get_ot",
     "analyze_salary",
     "get_full_salary_breakdown",
+    "get_allowance_breakdown",
 }
 
 
@@ -367,6 +368,8 @@ def execute_tool(tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
             return get_tax(employee_id=employee_id, month=month, year=year)
         if tool == "get_ot":
             return get_ot(employee_id=employee_id, month=month, year=year)
+        if tool == "get_allowance_breakdown":
+            return get_allowance_breakdown(employee_id=employee_id, month=month, year=year)
         if tool == "get_full_salary_breakdown":
             return get_full_salary_breakdown(employee_id=employee_id, month=month, year=year)
         return analyze_salary(
@@ -473,7 +476,28 @@ def get_full_salary_breakdown(
         },
     }   
 
-def get_allowance_breakdown(employee_id, month, year):
+def get_allowance_breakdown(
+    employee_id: int, month: str | None = None, year: int | None = None
+) -> dict[str, Any]:
+    month, year = _normalize_month_year(month, year)
+    validation_error = _validate_inputs(employee_id, month, year)
+    if validation_error:
+        return {"tool": "get_allowance_breakdown", **validation_error}
+    if not employee_exists(employee_id):
+        return {
+            "tool": "get_allowance_breakdown",
+            "status": "no_data",
+            "message": "Employee not found",
+            "data": {},
+        }
+    if month is None or year is None:
+        return {
+            "tool": "get_allowance_breakdown",
+            "status": "error",
+            "message": "month and year are required for allowance breakdown",
+            "data": {},
+        }
+
     month_year = f"{month}-{year}"
 
     query = """
@@ -486,6 +510,7 @@ def get_allowance_breakdown(employee_id, month, year):
     WHERE employee_id = :emp_id
       AND month = :month_year
     """
+    print(f"[QUERY] allowance_breakdown -> emp={employee_id}, month={month}, year={year}")
 
     with engine.connect() as conn:
         result = conn.execute(
@@ -494,14 +519,15 @@ def get_allowance_breakdown(employee_id, month, year):
         ).mappings().fetchone()
 
     if not result:
-        return {"status": "no_data"}
-    elif "allowance" in query:
         return {
             "tool": "get_allowance_breakdown",
-            "params": {...}
+            "status": "no_data",
+            "message": "No allowance breakdown data found",
+            "data": {},
         }
 
     return {
+        "tool": "get_allowance_breakdown",
         "status": "success",
         "data": dict(result)
     }

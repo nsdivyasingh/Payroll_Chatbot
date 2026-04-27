@@ -22,7 +22,6 @@ def validate_query_scope(query: str) -> tuple[bool, str]:
         if re.search(pattern, lowered):
             return (
                 False,
-                "I can only help with your own payroll details. "
-                "Please contact the payroll team for any cross-employee request.",
+                "I cannot provide details regarding other employees.",
             )
     return True, ""

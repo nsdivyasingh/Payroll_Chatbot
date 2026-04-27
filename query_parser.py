@@ -50,7 +50,7 @@ MONTH_TO_NUMBER = {
 def extract_query_params(query: str) -> dict[str, Any]:
     q = query.lower().strip()
     parsed: dict[str, Any] = {
-        "intent": "salary",
+        "intent": "unknown",
         "month": None,
         "year": None,
         "compare_prev": False,
@@ -58,22 +58,39 @@ def extract_query_params(query: str) -> dict[str, Any]:
         "raw": query,
     }
 
-    if "salary" in q and ("why" in q or "less" in q or "decrease" in q):
-        intent = "salary_explanation"
+    if any(token in q for token in ("salary", "net pay", "pay")) and any(
+        token in q for token in ("why", "less", "decrease", "reduced", "drop", "dropped")
+    ):
+        parsed["intent"] = "salary_explanation"
     elif any(kw in q for kw in ["night shift", "overtime", "ot ", " ot", "saot"]):
         parsed["intent"] = "ot_query"
     elif any(kw in q for kw in ["allowance", "reimbursement"]):
         parsed["intent"] = "allowance_query"
     elif any(
         kw in q
-        for kw in ["deduction", "deductions", "pf", "pt", "tax deduction", "earning", "earnings"]
+        for kw in [
+            "deduction",
+            "deductions",
+            "pf",
+            "pt",
+            "tax deduction",
+            "earning",
+            "earnings",
+            "basic",
+            "hra",
+            "lta",
+            "gratuity",
+            "gross salary",
+            "non tax",
+            "non-tax",
+        ]
     ):
         parsed["intent"] = "deduction_query"
     elif any(kw in q for kw in ["lop", "loss of pay"]):
         parsed["intent"] = "lop"
     elif any(kw in q for kw in ["tax", "tds", "regime"]):
         parsed["intent"] = "tax"
-    elif any(kw in q for kw in ["salary", "net pay", "gross", "deduction", "allowance"]):
+    elif any(kw in q for kw in ["salary", "net pay", "gross", "payroll", "payslip"]):
         parsed["intent"] = "salary"
 
     if any(
@@ -84,6 +101,10 @@ def extract_query_params(query: str) -> dict[str, Any]:
             "why salary less",
             "why is my salary less",
             "salary less than",
+            "my salary is less",
+            "salary decreased",
+            "salary dropped",
+            "salary reduced",
         ]
     ):
         parsed["compare_prev"] = True

@@ -3,8 +3,10 @@ from typing import Any, Dict
 
 import requests
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "phi3"
+URL = "http://localhost:11434/api/generate"
+MODEL = "phi3"
+OLLAMA_URL = URL
+OLLAMA_MODEL = MODEL
 
 TOOL_SCHEMAS = [
     {

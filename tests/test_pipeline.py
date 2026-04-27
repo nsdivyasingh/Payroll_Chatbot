@@ -98,13 +98,13 @@ def test_future_date_rejected() -> None:
 def test_guardrail_blocks_cross_employee_query() -> None:
     allowed, message = validate_query_scope("salary of employee 5")
     assert allowed is False
-    assert "own payroll details" in message
+    assert message == "I cannot provide details regarding other employees."
 
 
 def test_no_data_message_is_data_aware() -> None:
     plan = {"params": {"month": "Mar", "year": 2026}}
     msg = chat_service._data_aware_no_data_message("get_salary", plan)
-    assert msg == "No salary data available for Mar 2026."
+    assert msg == "Couldn't find info, please contact the payroll team."
 
 
 def test_partial_reasoning_message_when_previous_missing() -> None:
@@ -142,8 +142,26 @@ def test_safe_format_falls_back_when_llm_fails(monkeypatch) -> None:
                 }
             ]
         },
+        {"params": {"month": "Jan", "year": 2026}},
     )
-    assert "Your salary for Jan-2026 is 148760" in msg
+    assert "For Jan 2026, your net salary was" in msg
+
+
+def test_plan_allowance_routes_correctly() -> None:
+    plan = plan_tool(
+        {
+            "intent": "allowance_query",
+            "month": "Feb",
+            "year": 2026,
+        },
+        employee_id=15,
+    )
+    assert plan["tool"] == "get_allowance_breakdown"
+
+
+def test_parser_salary_explanation_intent() -> None:
+    parsed = extract_query_params("why is my salary less in feb 2026")
+    assert parsed["intent"] == "salary_explanation"
 
 
 def test_reason_codes_present() -> None:

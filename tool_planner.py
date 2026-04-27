@@ -12,17 +12,20 @@ def plan_tool(parsed_query: dict, employee_id: int) -> dict:
         "year": year,
     }
 
+    # Strict deterministic routing by parsed intent.
     if intent == "salary":
         return {"tool": "get_salary", "params": base_params}
     if intent == "tax":
         return {"tool": "get_tax", "params": base_params}
     if intent == "lop":
         return {"tool": "get_lop", "params": base_params}
-    if intent in {"ot_query", "allowance_query"}:
+    if intent == "ot_query":
         return {"tool": "get_ot", "params": base_params}
+    if intent == "allowance_query":
+        return {"tool": "get_allowance_breakdown", "params": base_params}
     if intent == "deduction_query":
         return {"tool": "get_full_salary_breakdown", "params": base_params}
-    elif intent == "salary_explanation":
+    if intent == "salary_explanation":
         return {
             "tool": "analyze_salary",
             "params": {

@@ -3,15 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 from audit_logger import log_audit, log_pipeline
-from classifier import classify_query
 from faq_engine import retrieve_faq
 from guardrails import validate_query_scope
 from llm_handler import ask_llm
 from query_parser import extract_query_params, normalize_time
 from tool_planner import plan_tool, validate_plan
 from tools import execute_tool
+from metadata.schema_metadata import SCHEMA_METADATA
 
-FALLBACK_MSG = "I could not confidently answer that. Please contact the payroll team."
+FALLBACK_MSG = "Couldn't find info, please contact the payroll team."
 
 
 def _build_recent_context(history: list[dict[str, Any]] | None, limit: int = 3) -> str:
@@ -28,87 +28,41 @@ def _build_recent_context(history: list[dict[str, Any]] | None, limit: int = 3) 
 
 
 def _format_with_llm(
-    user_query: str,
-    tool_name: str,
-    tool_data: Any,
+    query: str,
+    tool_data: dict[str, Any],
+    base_answer: str,
     context: str = "",
 ) -> str:
+    print("=== USING LLM ===")
     context_block = f"Previous context:\n{context}\n\n" if context else ""
-    if tool_name == "analyze_salary":
-        reason_codes = {}
-        if isinstance(tool_data, dict):
-            reason_codes = tool_data.get("data", {}).get("reason_codes", {})
-        answer_prompt = f"""
+    schema_context = str(SCHEMA_METADATA)
+    prompt = f"""
 You are a payroll assistant.
-Use ONLY the provided tool data.
-Explain salary change using these computed signals:
-- Net pay change: {reason_codes.get("netpay_delta")}
-- Tax impact: {reason_codes.get("tax_delta")}
-- LOP impact: {reason_codes.get("lop_impact")}
-- Deduction change: {reason_codes.get("deduction_delta")}
-The primary reason for salary change is: {reason_codes.get("primary_reason")}
 
-Explain clearly in exactly 3 sections:
-1. Salary change summary
-2. Key contributing factors (LOP, tax, deductions)
-3. Final conclusion
+Here is the database schema and meaning of fields:
+{schema_context}
 
-If the data does not support a reliable explanation, reply exactly:
-{FALLBACK_MSG}
+Use this information to better understand payroll terms.
+Rewrite the response in a concise, professional tone without changing facts, values, periods, or conclusions.
 
-{context_block}Current question:
-{user_query}
-
-Tool:
-{tool_name}
+{context_block}User question:
+{query}
 
 Tool data:
 {tool_data}
+
+Draft response to polish:
+{base_answer}
 """
-        answer = ask_llm(answer_prompt, temperature=0.1).strip()
-        return answer or FALLBACK_MSG
-
-    answer_prompt = f"""
-You are a payroll assistant.
-Respond only from the tool data.
-If answer is not fully supported by tool data, reply exactly:
-{FALLBACK_MSG}
-
-{context_block}Current question:
-{user_query}
-
-Tool:
-{tool_name}
-
-Tool data:
-{tool_data}
-"""
-    answer = ask_llm(answer_prompt, temperature=0.1).strip()
-    return answer or FALLBACK_MSG
+    print("PROMPT SENT TO LLM:\n", prompt)
+    answer = ask_llm(prompt, temperature=0.1).strip()
+    return answer or base_answer
 
 def format_currency(amount):
     if amount in (None, ""):
         return "₹0"
     return f"₹{int(float(amount)):,}"
 
-
-def format_breakdown(data: dict[str, Any]) -> str:
-    earnings = data.get("earnings", {}) if isinstance(data, dict) else {}
-    deductions = data.get("deductions", {}) if isinstance(data, dict) else {}
-    lines = ["📊 Salary Breakdown:", "", "💰 Earnings:"]
-    for key, value in earnings.items():
-        if value not in (None, 0, 0.0, ""):
-            lines.append(f"• {key}: {format_currency(value)}")
-
-    lines.extend(["", "💸 Deductions:"])
-    for key, value in deductions.items():
-        if value not in (None, 0, 0.0, ""):
-            lines.append(f"• {key}: {format_currency(value)}")
-
-    lines.append("")
-    lines.append(f"Total Deduction: {format_currency(data.get('gross_deduction'))}")
-    lines.append(f"Net Pay: {format_currency(data.get('netpay'))}")
-    return "\n".join(lines)
 
 def _basic_template(tool_name: str, tool_data: dict[str, Any]) -> str:
     rows = tool_data.get("data", []) if isinstance(tool_data, dict) else []
@@ -128,8 +82,95 @@ def _basic_template(tool_name: str, tool_data: dict[str, Any]) -> str:
         return f"You have {len(rows)} LOP entries in the requested period."
     if tool_name == "get_ot" and rows:
         return f"You have {len(rows)} OT/allowance entries in the requested period."
+    if tool_name == "get_allowance_breakdown" and isinstance(tool_data, dict):
+        allowance_data = tool_data.get("data", {})
+        if isinstance(allowance_data, dict) and allowance_data:
+            formatted = ", ".join(f"{k}: {v}" for k, v in allowance_data.items())
+            return f"Allowance breakdown for the requested period: {formatted}."
     if tool_name == "analyze_salary":
         return _summarize_analyze_result(tool_data)
+    return FALLBACK_MSG
+
+
+def _deterministic_format(
+    user_query: str,
+    tool_name: str,
+    tool_data: dict[str, Any],
+    plan: dict[str, Any],
+) -> str:
+    period = "the requested period"
+    params = plan.get("params", {}) if isinstance(plan, dict) else {}
+    month = params.get("month")
+    year = params.get("year")
+    if month and year:
+        period = f"{month} {year}"
+
+    if tool_name == "get_allowance_breakdown":
+        data = tool_data.get("data", {}) if isinstance(tool_data, dict) else {}
+        if not isinstance(data, dict) or not data:
+            return FALLBACK_MSG
+        return (
+            f"For {period}, your allowance components are Other Allowance {format_currency(data.get('other_allowance', 0))}, "
+            f"Bonus {format_currency(data.get('bonus', 0))}, Incentive {format_currency(data.get('incentive', 0))}, "
+            f"and Night Shift Allowance {format_currency(data.get('night_shift_all', 0))}."
+        )
+
+    if tool_name == "analyze_salary":
+        payload = tool_data.get("data", {}) if isinstance(tool_data, dict) else {}
+        current = payload.get("current_salary", {}).get("data", [])
+        previous = payload.get("previous_salary", {}).get("data", [])
+        reasons = payload.get("reason_codes", {})
+        if not current or not previous:
+            return FALLBACK_MSG
+        curr = current[0]
+        prev = previous[0]
+        primary_reason = str(reasons.get("primary_reason", "deductions"))
+        reason_text = {
+            "tax": "an increase in tax deductions",
+            "lop": "loss of pay (LOP) impact",
+            "deductions": "an increase in overall deductions",
+        }.get(primary_reason, "changes in deductions")
+        lop_impact = reasons.get("lop_impact", 0) or 0
+        lop_suffix = (
+            " There was no LOP impact."
+            if float(lop_impact) == 0
+            else f" LOP impact was {lop_impact} day(s)."
+        )
+        change = float(reasons.get("netpay_delta", 0) or 0)
+        direction = "decreased" if change < 0 else "increased" if change > 0 else "changed"
+        return (
+            f"Your salary {direction} in {curr.get('month')} {curr.get('eyear')} compared to "
+            f"{prev.get('month')} {prev.get('eyear')} due to {reason_text}.{lop_suffix}"
+        )
+
+    rows = tool_data.get("data", []) if isinstance(tool_data, dict) else []
+    if tool_name == "get_salary" and rows:
+        row = rows[0]
+        return (
+            f"For {row.get('month')} {row.get('eyear')}, your net salary was {format_currency(row.get('total_netpay'))}, "
+            f"with gross earnings of {format_currency(row.get('gross_earning'))} and total deductions of {format_currency(row.get('gross_deduction'))}."
+        )
+    if tool_name == "get_tax" and rows:
+        row = rows[0]
+        return f"For {row.get('month')} {row.get('eyear')}, your total tax liability was {format_currency(row.get('total_tax_liability'))}."
+    if tool_name == "get_lop" and rows:
+        lop_total = sum(float(r.get("lop_days", 0) or 0) for r in rows)
+        return f"For {period}, your recorded LOP was {lop_total} day(s)."
+    if tool_name == "get_ot" and rows:
+        return f"I found {len(rows)} OT/allowance entry(ies) for {period}."
+    if tool_name == "get_full_salary_breakdown" and isinstance(tool_data, dict):
+        data = tool_data.get("data", {})
+        if not isinstance(data, dict) or not data:
+            return FALLBACK_MSG
+        earnings = data.get("earnings", {})
+        deductions = data.get("deductions", {})
+        return (
+            f"For {period}, your key earnings were Basic {format_currency(earnings.get('Basic', 0))}, "
+            f"HRA {format_currency(earnings.get('HRA', 0))}, Bonus {format_currency(earnings.get('Bonus', 0))}, "
+            f"and Other Allowance {format_currency(earnings.get('Other Allowance', 0))}. "
+            f"Your key deductions were PF {format_currency(deductions.get('PF', 0))}, PT {format_currency(deductions.get('PT', 0))}, "
+            f"Income Tax {format_currency(deductions.get('Income Tax', 0))}, and Other deductions {format_currency(deductions.get('Other', 0))}."
+        )
     return FALLBACK_MSG
 
 
@@ -137,56 +178,37 @@ def _safe_format(
     user_query: str,
     tool_name: str,
     tool_data: dict[str, Any],
+    plan: dict[str, Any],
     context: str = "",
 ) -> str:
-    if tool_name == "get_full_salary_breakdown" and isinstance(tool_data, dict):
-        return format_breakdown(tool_data.get("data", {}))
+    deterministic_answer = _deterministic_format(
+        user_query=user_query,
+        tool_name=tool_name,
+        tool_data=tool_data,
+        plan=plan,
+    )
+    if deterministic_answer == FALLBACK_MSG:
+        return FALLBACK_MSG
     try:
-        answer = _format_with_llm(
-            user_query=user_query,
-            tool_name=tool_name,
+        polished = _format_with_llm(
+            query=user_query,
             tool_data=tool_data,
+            base_answer=deterministic_answer,
             context=context,
         )
-        return answer or _basic_template(tool_name, tool_data)
-    except Exception:
-        return _basic_template(tool_name, tool_data)
+        return polished or deterministic_answer
+    except Exception as exc:
+        print(f"LLM polish skipped due to error: {exc}")
+        return deterministic_answer
 
 
 def _smart_analyze_no_data_message(tool_data: dict[str, Any]) -> str:
-    payload = tool_data.get("data", {}) if isinstance(tool_data, dict) else {}
-    current = payload.get("current_salary", {})
-    previous = payload.get("previous_salary", {})
-    current_ok = isinstance(current, dict) and current.get("status") == "success"
-    previous_ok = isinstance(previous, dict) and previous.get("status") == "success"
-
-    if current_ok and not previous_ok:
-        current_rows = current.get("data", [])
-        if current_rows:
-            row = current_rows[0]
-            return (
-                f"Your current salary for {row.get('month')}-{row.get('eyear')} is "
-                f"{row.get('total_netpay')}. Previous month data is unavailable, so "
-                "a full comparison cannot be completed."
-            )
-    return "Salary data for the selected period is not available yet. Please check back later or contact payroll."
+    return FALLBACK_MSG
 
 
 def _data_aware_no_data_message(tool_name: str, plan: dict[str, Any]) -> str:
-    params = plan.get("params", {})
-    month = params.get("month")
-    year = params.get("year")
-    period = f"{month} {year}" if month and year else "the requested period"
-    if tool_name == "get_salary":
-        return f"No salary data available for {period}."
-    if tool_name == "get_tax":
-        return f"No tax data available for {period}."
-    if tool_name == "get_lop":
-        return f"No LOP data available for {period}."
-    if tool_name == "get_ot":
-        return f"No OT/allowance data available for {period}."
     if tool_name == "get_full_salary_breakdown":
-        return f"No earnings/deductions breakdown available for {period}."
+        return FALLBACK_MSG
     return FALLBACK_MSG
 
 
@@ -249,46 +271,20 @@ def process_user_query(
     if not normalized.get("time_valid", True):
         result = {
             "status": "fallback",
-            "answer": normalized.get("time_error", FALLBACK_MSG),
+            "answer": FALLBACK_MSG,
             "source": "payroll",
         }
         log_pipeline({**pipeline_context, "result": result, "stage": "time_validation"})
         log_audit({**event, **result, "stage": "time_validation"})
         return result
-    category = classify_query(user_query)
-
-    if category == "unsupported":
-        result = {"status": "fallback", "answer": FALLBACK_MSG}
-        log_audit(
-            {
-                **event,
-                **result,
-                "stage": "classifier",
-                "category": category,
-                "normalized_month": normalized.get("month_year"),
-            }
-        )
-        return result
-
-    if category == "faq":
-        faq_hit = retrieve_faq(user_query, threshold=0.5)
-        if faq_hit:
-            result = {
-                "status": "ok",
-                "answer": faq_hit["answer"],
-                "source": "faq",
-            }
-        else:
-            result = {"status": "fallback", "answer": FALLBACK_MSG, "source": "faq"}
-        log_audit(
-            {
-                **event,
-                **result,
-                "stage": "faq",
-                "category": category,
-                "normalized_month": normalized.get("month_year"),
-            }
-        )
+    faq_hit = retrieve_faq(user_query, threshold=0.65)
+    if faq_hit:
+        result = {
+            "status": "ok",
+            "answer": faq_hit["answer"],
+            "source": "faq",
+        }
+        log_audit({**event, **result, "stage": "faq"})
         return result
 
     plan = plan_tool(normalized, employee_id)
@@ -339,6 +335,7 @@ def process_user_query(
         user_query=user_query,
         tool_name=tool_name,
         tool_data=tool_data,
+        plan=plan,
         context=context,
     )
     if answer.strip() == FALLBACK_MSG:

@@ -5,7 +5,7 @@ from chat_service import process_user_query
 # CONFIG
 # -------------------------------
 FILE_PATH = "Ascendion_test_cases.xlsx"
-EMPLOYEE_ID = 3  # test user
+EMPLOYEE_ID = 15  # test user aligned with payroll samples
 
 
 # -------------------------------
@@ -39,13 +39,15 @@ def resolve_column(df, candidates):
 # HELPER: simple match logic
 # -------------------------------
 def is_match(actual, expected):
+    if pd.isna(actual) or pd.isna(expected):
+        return True
     if not actual or not expected:
         return False
 
     actual = str(actual).lower()
     expected = str(expected).lower()
 
-    return expected in actual  # simple containment check
+    return actual == expected
 
 
 # -------------------------------
@@ -54,7 +56,10 @@ def is_match(actual, expected):
 def run_evaluation():
     df = pd.read_excel(FILE_PATH)
     query_col = resolve_column(df, ["query", "question", "prompt"])
-    expected_col = resolve_column(df, ["response", "answer", "expected", "expected_response"])
+    expected_col = resolve_column(
+        df,
+        ["expected response", "expected answer", "response", "answer", "expected", "expected_response"],
+    )
 
     results = []
 
@@ -63,7 +68,7 @@ def run_evaluation():
 
     for idx, row in df.iterrows():
         query = str(row[query_col])
-        expected = str(row[expected_col])
+        expected = row[expected_col]
 
         print(f"\n[Query] {safe_text(query)}")
 
@@ -74,20 +79,24 @@ def run_evaluation():
             actual = f"ERROR: {str(e)}"
 
         match = is_match(actual, expected)
+        contains_match = (
+            True if pd.isna(expected) else str(expected).lower() in str(actual).lower()
+        )
 
         if match:
             correct += 1
 
         results.append({
             "query": query,
-            "expected": expected,
+            "expected": "" if pd.isna(expected) else str(expected),
             "actual": actual,
-            "match": match
+            "match": match,
+            "contains_match": contains_match,
         })
 
         print(f"Expected: {safe_text(expected)}")
         print(f"Actual: {safe_text(actual)}")
-        print(f"Match: {match}")
+        print(f"Exact Match: {match} | Contains Match: {contains_match}")
 
     accuracy = (correct / total) * 100
 

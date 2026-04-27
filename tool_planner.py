@@ -15,6 +15,30 @@ def plan_tool(parsed_query: dict, employee_id: int, user_query: str = "") -> dic
         "year": year,
     }
 
+    q = user_query.lower()
+    
+    # -----------------------------
+    # BASIC SALARY / DEDUCTION QUERIES
+    # -----------------------------
+    if "salary" in q and "why" not in q:
+        return {"tool": "get_salary", "params": base_params}
+
+    if "deduction" in q and "tax" not in q:
+        return {"tool": "get_full_salary_breakdown", "params": base_params}
+
+    if "earning" in q:
+        return {"tool": "get_full_salary_breakdown", "params": base_params}
+
+    if "pf" in q:
+        return {"tool": "get_salary", "params": base_params}
+
+    if "reimbursement" in q:
+        return {"tool": "get_ot_reimbursement", "params": base_params}
+
+    query_type_str = parsed_query.get("query_type")
+    if query_type_str == "ot_reimbursement":
+        return {"tool": "get_ot_reimbursement", "params": base_params}
+
     if intent == "salary_explanation":
         return {
             "tool": "analyze_salary",

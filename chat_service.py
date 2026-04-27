@@ -134,6 +134,8 @@ def _basic_template(tool_name: str, tool_data: dict[str, Any]) -> str:
         return f"You have {len(rows)} LOP entries in the requested period."
     if tool_name == "get_ot" and rows:
         return f"You have {len(rows)} OT/allowance entries in the requested period."
+    if tool_name == "get_ot_reimbursement" and rows:
+        return f"You have {len(rows)} reimbursement/OT entries in the requested period."
     if tool_name == "get_allowance_breakdown" and isinstance(tool_data, dict):
         allowance_data = tool_data.get("data", {})
         if isinstance(allowance_data, dict) and allowance_data:
@@ -161,10 +163,14 @@ def _deterministic_format(
         data = tool_data.get("data", {}) if isinstance(tool_data, dict) else {}
         if not isinstance(data, dict) or not data:
             return FALLBACK_MSG
+        
+        total = data.get("total_allowance", 0)
+        comps = data.get("components", {})
         return (
-            f"For {period}, your allowance components are Other Allowance {format_currency(data.get('other_allowance', 0))}, "
-            f"Bonus {format_currency(data.get('bonus', 0))}, Incentive {format_currency(data.get('incentive', 0))}, "
-            f"and Night Shift Allowance {format_currency(data.get('night_shift_all', 0))}."
+            f"For {period}, your total allowance received was {format_currency(total)}. "
+            f"This includes Other Allowance {format_currency(comps.get('other_allowance', 0))}, "
+            f"Bonus {format_currency(comps.get('bonus', 0))}, Incentive {format_currency(comps.get('incentive', 0))}, "
+            f"and Night Shift Allowance {format_currency(comps.get('night_shift_all', 0))}."
         )
 
     if tool_name == "analyze_salary":
@@ -192,6 +198,17 @@ def _deterministic_format(
         return f"For {period}, your recorded LOP was {lop_total} day(s)."
     if tool_name == "get_ot" and rows:
         return f"I found {len(rows)} OT/allowance entry(ies) for {period}."
+        
+    if tool_name == "get_ot_reimbursement" and rows:
+        lines = []
+        for r in rows:
+            amt = format_currency(r.get("paid_amount", 0))
+            a_type = str(r.get("allowance_type") or "Reimbursement/OT").title()
+            start_date = str(r.get("from_date") or "").split(" ")[0]
+            end_date = str(r.get("to_date") or "").split(" ")[0]
+            lines.append(f"{a_type} of {amt} (Period: {start_date} to {end_date})")
+        return f"For {period}, we identified: " + ", ".join(lines) + "."
+
     if tool_name == "get_full_salary_breakdown" and isinstance(tool_data, dict):
         data = tool_data.get("data", {})
         if not isinstance(data, dict) or not data:
@@ -235,6 +252,12 @@ def _format_field_response(
         month=month or tool_data.get("month") or "the requested period",
         year=year or tool_data.get("year") or "",
     )
+    
+    if field_key == "tax_regime":
+        if "regime" in str(value).lower():
+            response = str(value)
+        else:
+            response = f"Your tax regime is {formatted_value}."
     if tool_data.get("status") == "success_fallback":
         fallback_to = tool_data.get("fallback_to")
         original = tool_data.get("original_request")
@@ -321,10 +344,12 @@ def process_user_query(
     }
 
     # ENFORCE SECURITY
-    if "employee" in user_query.lower() and str(employee_id) not in user_query:
-        result = {"status": "blocked", "answer": SYSTEM_POLICIES["employee_scope"]["response"], "source": "payroll"}
-        log_audit({**event, **result, "stage": "security_policy"})
-        return result
+    q_lower = user_query.lower()
+    if "employee" in q_lower or "emp" in q_lower:
+        if str(employee_id) not in user_query:
+            result = {"status": "blocked", "answer": SYSTEM_POLICIES["employee_scope"]["response"], "source": "payroll"}
+            log_audit({**event, **result, "stage": "security_policy"})
+            return result
 
     # BLOCK PERSONAL DATA
     personal_keywords = ["pf code", "name", "bank", "pan", "ifsc"]

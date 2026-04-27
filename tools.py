@@ -12,6 +12,7 @@ ALLOWED_TOOLS = {
     "get_lop",
     "get_tax",
     "get_ot",
+    "get_ot_reimbursement",
     "analyze_salary",
     "get_full_salary_breakdown",
     "get_allowance_breakdown",
@@ -263,6 +264,37 @@ def get_ot(employee_id: int, month: str | None = None, year: int | None = None) 
         return {"tool": "get_ot", "status": "no_data", "message": "No OT/allowance data found", "data": []}
     return {"tool": "get_ot", "status": "success", "data": rows}
 
+def get_ot_reimbursement(employee_id: int, month: str | None = None, year: int | None = None) -> dict[str, Any]:
+    month, year = _normalize_month_year(month, year)
+    validation_error = _validate_inputs(employee_id, month, year)
+    if validation_error:
+        return {"tool": "get_ot_reimbursement", **validation_error}
+    if not employee_exists(employee_id):
+        return {"tool": "get_ot_reimbursement", "status": "no_data", "message": "Employee not found", "data": []}
+
+    query_str = """
+        SELECT month, allowance_type, from_date, to_date, paid_amount
+        FROM ot_data
+        WHERE employee_id = :emp_id
+    """
+    params = {"emp_id": employee_id}
+    
+    if month and year is not None:
+        query_str += " AND month = :month AND EXTRACT(YEAR FROM from_date) = :year "
+        params.update({"month": month, "year": year})
+    elif month:
+        query_str += " AND month = :month "
+        params.update({"month": month})
+    
+    query_str += " ORDER BY from_date DESC LIMIT 20 "
+
+    with engine.connect() as conn:
+        rows = [dict(row._mapping) for row in conn.execute(text(query_str), params).fetchall()]
+    
+    if not rows:
+        return {"tool": "get_ot_reimbursement", "status": "no_data", "message": "No reimbursement data found", "data": []}
+
+    return {"tool": "get_ot_reimbursement", "status": "success", "data": rows}
 
 def _first_row(payload: dict[str, Any]) -> dict[str, Any] | None:
     rows = payload.get("data", []) if isinstance(payload, dict) else []
@@ -280,7 +312,23 @@ def analyze_salary(employee_id, month, year, previous_month, previous_year):
     lop_current = get_lop(employee_id, month, year)
 
     if current.get("status") != "success":
-        return {"tool": "analyze_salary", "status": "no_data"}
+        reasons = []
+        if lop_current.get("status") == "success":
+            lop_days = sum(float(row.get("lop_days", 0) or 0) for row in lop_current["data"])
+            reasons.append(f"We could not find your precise salary records for {month} {year}, but we found {lop_days} days of LOP registered.")
+        else:
+            reasons.append(f"We could not find any salary or LOP records for {month} {year}.")
+            
+        return {
+            "tool": "analyze_salary",
+            "status": "success",
+            "data": {
+                "current": None,
+                "previous": None,
+                "reasons": reasons,
+                "primary_reason": "missing_current_data"
+            }
+        }
 
     curr = current["data"][0]
     prev = previous["data"][0] if previous.get("status") == "success" else None
@@ -325,6 +373,9 @@ def analyze_salary(employee_id, month, year, previous_month, previous_year):
     elif lop_days > 0:
         primary_reason = "loss of pay (LOP)"
 
+    if not reasons:
+        reasons = ["There is no significant change in salary components for this period."]
+
     return {
         "tool": "analyze_salary",
         "status": "success",
@@ -359,6 +410,8 @@ def execute_tool(tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
             return get_tax(employee_id=employee_id, month=month, year=year)
         if tool == "get_ot":
             return get_ot(employee_id=employee_id, month=month, year=year)
+        if tool == "get_ot_reimbursement":
+            return get_ot_reimbursement(employee_id=employee_id, month=month, year=year)
         if tool == "get_allowance_breakdown":
             return get_allowance_breakdown(employee_id=employee_id, month=month, year=year)
         if tool == "get_field_value":
@@ -528,18 +581,20 @@ def get_allowance_breakdown(
 
     data = dict(result)
     
-    total_allowance = sum([
+    total = sum([
         float(data.get("bonus") or 0),
         float(data.get("incentive") or 0),
         float(data.get("other_allowance") or 0),
         float(data.get("night_shift_all") or 0),
     ])
-    data["total_allowance"] = total_allowance
 
     return {
         "tool": "get_allowance_breakdown",
         "status": "success",
-        "data": data
+        "data": {
+            "total_allowance": total,
+            "components": data
+        }
     }
 
 

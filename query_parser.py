@@ -58,6 +58,8 @@ def extract_query_params(query: str) -> dict[str, Any]:
         "year": None,
         "compare_prev": False,
         "relative_time": None,
+        "fy_start": None,
+        "query_type": None,
         "raw": query,
     }
 
@@ -131,6 +133,14 @@ def extract_query_params(query: str) -> dict[str, Any]:
         parsed["relative_time"] = "last_month"
     elif "this month" in q or "current month" in q:
         parsed["relative_time"] = "this_month"
+    elif "last year" in q or "previous year" in q:
+        parsed["relative_time"] = "last_year"
+    elif "this year" in q or "current year" in q:
+        parsed["relative_time"] = "this_year"
+
+    fy_match = re.search(r"\bfy\s*(20\d{2})(?:-(20\d{2}|\d{2}))?\b", q)
+    if fy_match:
+        parsed["fy_start"] = int(fy_match.group(1))
 
     # Explicit formats: "Jan 2026", "January, 2026"
     month_year_match = re.search(
@@ -189,12 +199,25 @@ def normalize_time(parsed: dict[str, Any], now: datetime | None = None) -> dict[
             prev_date = datetime(now.year, now.month - 1, 1)
             normalized["month"] = prev_date.strftime("%b")
             normalized["year"] = prev_date.year
+    elif relative_time == "this_year":
+        normalized["fy_start"] = now.year if now.month >= 4 else now.year - 1
+    elif relative_time == "last_year":
+        normalized["fy_start"] = now.year - 1 if now.month >= 4 else now.year - 2
     else:
-        if month and year is None:
+        normalized["fy_start"] = parsed.get("fy_start")
+        
+        if month and year is None and not normalized.get("fy_start"):
             normalized["year"] = now.year
         elif normalized.get("compare_prev") and not month and not year:
             normalized["month"] = now.strftime("%b")
             normalized["year"] = now.year
+
+    from metadata.query_context import QueryContext
+    normalized["query_type"] = QueryContext.determine_query_type(
+        query=parsed["raw"], 
+        parsed_intent=parsed["intent"], 
+        field_request=parsed.get("field_request")
+    ).value
 
     if normalized.get("month") and normalized.get("year"):
         normalized["month_year"] = f"{normalized['month']}-{normalized['year']}"

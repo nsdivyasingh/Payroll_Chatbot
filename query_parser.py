@@ -77,7 +77,11 @@ def extract_query_params(query: str) -> dict[str, Any]:
         else:
             parsed["intent"] = "field_total"
 
-    if "salary" in q and any(word in q for word in ["why", "less", "reduced", "decrease", "deduction"]):
+    if "tax regime" in q:
+        parsed["intent"] = "tax_regime_query"
+    elif "deduction" in q:
+        parsed["intent"] = "deduction_query"
+    elif "salary" in q and any(word in q for word in ["why", "less", "reduced", "decrease"]):
         parsed["intent"] = "salary_explanation"
     elif parsed["field_request"] is None and any(kw in q for kw in ["night shift", "overtime", "ot ", " ot", "saot"]):
         parsed["intent"] = "ot_query"
@@ -203,6 +207,9 @@ def normalize_time(parsed: dict[str, Any], now: datetime | None = None) -> dict[
         normalized["fy_start"] = now.year if now.month >= 4 else now.year - 1
     elif relative_time == "last_year":
         normalized["fy_start"] = now.year - 1 if now.month >= 4 else now.year - 2
+        
+        if "last year" in parsed.get("raw", "").lower():
+            normalized["year"] = now.year - 1
     else:
         normalized["fy_start"] = parsed.get("fy_start")
         
@@ -260,35 +267,30 @@ def normalize_time(parsed: dict[str, Any], now: datetime | None = None) -> dict[
     intent = parsed.get("intent")
 
     # ONLY for reasoning queries
-    if intent == "salary_explanation" and normalized.get("month") and normalized.get("year"):
-        try:
-            idx = MONTHS.index(normalized["month"])
-            if idx == 0:
-                prev_month = "Dec"
-                prev_year = normalized["year"] - 1
-            else:
-                prev_month = MONTHS[idx - 1]
-                prev_year = normalized["year"]
-            
-            normalized["previous_month"] = prev_month
-            normalized["previous_year"] = prev_year
-        except ValueError:
-            pass
+    if intent == "salary_explanation":
+        if not normalized.get("previous_month"):
+            m = normalized.get("month") or now.strftime("%b")
+            y = normalized.get("year") or now.year
+            try:
+                idx = MONTHS.index(m)
+                if idx == 0:
+                    prev_month = "Dec"
+                    prev_year = y - 1
+                else:
+                    prev_month = MONTHS[idx - 1]
+                    prev_year = y
+                
+                normalized["previous_month"] = prev_month
+                normalized["previous_year"] = prev_year
+                
+                if not normalized.get("month"):
+                    normalized["month"] = m
+                if not normalized.get("year"):
+                    normalized["year"] = y
+            except ValueError:
+                pass
 
     normalized["field_request"] = parsed.get("field_request")
 
     return normalized
-
-def execute_with_fallback(table, column, employee_id, month, year):
-    # Try exact month
-    result = query(table, column, employee_id, month, year)
-    
-    if not result:
-        # Fall back to latest available
-        latest = query_latest_available(table, employee_id)
-        return {
-            "result": latest,
-            "fallback": True,
-            "original_month": month,
-            "latest_month": latest_month
-        }
+

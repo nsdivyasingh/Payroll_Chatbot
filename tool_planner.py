@@ -2,6 +2,33 @@ from __future__ import annotations
 
 from metadata.field_registry import FieldRegistry
 
+ALLOWED_TOOLS = {
+    "get_salary",
+    "get_tax",
+    "get_lop",
+    "get_ot",
+    "analyze_salary",
+    "get_full_salary_breakdown"
+}
+
+def validate_llm_plan(plan, employee_id):
+    if not plan:
+        return None
+
+    tool = plan.get("tool")
+    params = plan.get("params", {})
+
+    if tool not in ALLOWED_TOOLS:
+        return None
+
+    params["employee_id"] = employee_id
+
+    # enforce month/year where needed
+    if tool in ["get_salary", "get_tax", "get_ot", "get_full_salary_breakdown"]:
+        if not params.get("month") or not params.get("year"):
+            return None
+
+    return {"tool": tool, "params": params}
 
 def plan_tool(parsed_query: dict, employee_id: int, user_query: str = "") -> dict:
     intent = parsed_query.get("intent")
@@ -39,14 +66,34 @@ def plan_tool(parsed_query: dict, employee_id: int, user_query: str = "") -> dic
     if query_type_str == "ot_reimbursement":
         return {"tool": "get_ot_reimbursement", "params": base_params}
 
+    MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
     if intent == "salary_explanation":
+        month = parsed_query.get("month")
+        year = parsed_query.get("year")
+
+        # 🔥 SPECIAL RULE FOR JANUARY
+        if month == "Jan":
+            return {
+                "tool": "get_full_salary_breakdown",
+                "params": {
+                    "employee_id": employee_id,
+                    "month": month,
+                    "year": year
+                }
+            }
+
+        # NORMAL FLOW
         return {
             "tool": "analyze_salary",
             "params": {
-                **base_params,
+                "employee_id": employee_id,
+                "month": month,
+                "year": year,
                 "previous_month": parsed_query.get("previous_month"),
                 "previous_year": parsed_query.get("previous_year"),
-            },
+            }
         }
 
     if field_request:
@@ -63,6 +110,15 @@ def plan_tool(parsed_query: dict, employee_id: int, user_query: str = "") -> dic
             }
 
     # Strict deterministic routing by parsed intent.
+    if intent == "tax_regime_query":
+        return {
+            "tool": "get_tax",
+            "params": {
+                "employee_id": employee_id,
+                "year": parsed_query.get("year")
+            }
+        }
+    
     if intent == "salary":
         return {"tool": "get_salary", "params": base_params}
     if intent == "tax":

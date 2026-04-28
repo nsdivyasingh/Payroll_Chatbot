@@ -467,17 +467,7 @@ def get_full_salary_breakdown(
 
     month_year = f"{month}-{year}"
     query = """
-    SELECT 
-        basic,
-        h_r_a,
-        bonus,
-        other_allowance,
-        pt_ded,
-        pf_ded,
-        income_tax_ded,
-        other_ded_2_ded,
-        gross_deduction,
-        total_netpay
+    SELECT *
     FROM pay_register_raw
     WHERE employee_id = :emp_id
       AND month = :month_year
@@ -526,8 +516,11 @@ def get_full_salary_breakdown(
         "data": {
             "earnings": earnings,
             "deductions": deductions,
+            "earnings_full": data,
+            "deductions_full": data,
             "gross_deduction": data.get("gross_deduction"),
             "netpay": data.get("total_netpay"),
+            "lop_days": data.get("lopd", 0),
         },
     }   
 
@@ -729,15 +722,3 @@ def get_field_value(
         "year": data.get("eyear"),
         "data": data,
     }
-
-# tools.py - modify get_tax, get_salary, etc.
-def get_salary_with_fallback(employee_id, month, year):
-    result = get_salary(employee_id, month, year)
-    if not result.get("data"):
-        # Try latest
-        latest = get_latest_salary(employee_id)
-        return {
-            **result,
-            "data": latest["data"],
-            "fallback": f"No data for {month}-{year}, showing {latest_month}"
-        }

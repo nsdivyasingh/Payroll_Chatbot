@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import requests
 from typing import Any
+from datetime import datetime
 
 from audit_logger import log_audit, log_pipeline
 from faq_engine import retrieve_faq
@@ -17,12 +19,102 @@ from query_engine import engine
 from sqlalchemy import text
 from llm_smart_roter import route_query_with_llm
 from safe_query_engine import execute_safe_query
+from intent_router import classify_intent
+from llm_router import llm_plan
+from tool_planner import validate_llm_plan
 
 FIELD_DESCRIPTIONS = SCHEMA_METADATA.get("FIELD_DESCRIPTIONS", {})
 RELATIONSHIPS = SCHEMA_METADATA.get("RELATIONSHIPS", {})
 NORMALIZED_FIELDS = SCHEMA_METADATA.get("NORMALIZED_FIELDS", {})
 
 FALLBACK_MSG = "Couldn't find info, please contact the payroll team."
+EARNING_FIELDS = {
+    "basic": "Basic",
+    "h_r_a": "HRA",
+    "lta": "LTA",
+    "gratuity": "Gratuity",
+    "leave_encash": "Leave Encashment",
+    "mange_allow": "Management Allowance",
+    "bonus": "Bonus",
+    "other_allowance": "Other Allowance",
+    "yearly_bonus": "Yearly Bonus",
+    "incentive": "Incentive",
+    "night_shift_all": "Night Shift Allowance",
+    "sign_tenure_bon": "Sign/Tenure Bonus",
+    "nontax": "Non-Taxable Earnings",
+    "referal_bonus": "Referral Bonus",
+    "notice_per_pay": "Notice Period Pay",
+    "misc_earn": "Misc Earnings",
+    "salary_advance": "Salary Advance",
+    "tele_reimb": "Tele Reimbursement",
+    "joibon": "Joining Bonus",
+    "serweigh": "Service Weightage",
+    "relocation": "Relocation Allowance",
+    "prof_developmnt": "Professional Development",
+    "maternity_bonus": "Maternity Bonus",
+}
+
+DEDUCTION_FIELDS = {
+    "pt_ded": "Professional Tax (PT)",
+    "pf_ded": "Provident Fund (PF)",
+    "esi_employee_ded": "ESI Deduction",
+    "vpf_ded": "VPF Deduction",
+    "income_tax_ded": "Income Tax",
+    "l_w_f_ded": "Labour Welfare Fund",
+    "sal_adv_ded": "Salary Advance Deduction",
+    "notice_per_ded_ded": "Notice Period Deduction",
+    "medical_ins_par_ded": "Medical Insurance",
+    "oth_dedu_ded": "Other Deductions",
+    "other_ded_2_ded": "Additional Deductions",
+}
+
+def _format_full_breakdown(tool_data, month, year):
+    data = tool_data.get("data", {})
+
+    earnings_raw = data.get("earnings_full", {})
+    deductions_raw = data.get("deductions_full", {})
+
+    lop_days = int(data.get("lop_days", 0) or 0)
+
+    lop_text = ""
+    if lop_days > 0:
+        lop_text = (
+            f"\n\nLOP (Loss of Pay) impact: {lop_days} day(s) "
+            f"(leave taken in previous period but deducted in this payroll month)"
+        )
+    netpay = data.get("netpay", 0)
+    gross_ded = data.get("gross_deduction", 0)
+
+    # 🔹 Earnings
+    earnings_lines = []
+    for key, label in EARNING_FIELDS.items():
+        val = float(earnings_raw.get(key, 0) or 0)
+        if val != 0:
+            earnings_lines.append(f"- {label}: {format_currency(val)}")
+
+    # 🔹 Deductions
+    deduction_lines = []
+    for key, label in DEDUCTION_FIELDS.items():
+        val = float(deductions_raw.get(key, 0) or 0)
+        if val != 0:
+            deduction_lines.append(f"- {label}: {format_currency(val)}")
+
+    # 🔹 Build response
+    response = f"I found your payroll for {month} {year}."
+
+    if lop_days:
+        response += lop_text
+
+    if earnings_lines:
+        response += f"\n\nEarnings Breakdown:\n" + "\n".join(earnings_lines)
+
+    if deduction_lines:
+        response += f"\n\nDeductions Breakdown:\n" + "\n".join(deduction_lines)
+
+    response += f"\n\nTotal Deductions: {format_currency(gross_ded)}"
+    response += f"\nNet Pay: {format_currency(netpay)}"
+
+    return response
 
 def _get_latest_month_from_db(employee_id: int) -> tuple[str | None, int | None]:
     query = text("""
@@ -149,11 +241,14 @@ def _basic_template(tool_name: str, tool_data: dict[str, Any]) -> str:
 
 
 def _deterministic_format(
-    user_query: str,
-    tool_name: str,
-    tool_data: dict[str, Any],
-    plan: dict[str, Any],
-) -> str:
+    user_query,
+    tool_name,
+    tool_data,
+    plan,
+    intent=None,
+    response=None
+):
+
     period = "the requested period"
     params = plan.get("params", {}) if isinstance(plan, dict) else {}
     month = params.get("month")
@@ -192,6 +287,25 @@ def _deterministic_format(
             f"For {row.get('month')} {row.get('eyear')}, your net salary was {format_currency(row.get('total_netpay'))}, "
             f"with gross earnings of {format_currency(row.get('gross_earning'))} and total deductions of {format_currency(row.get('gross_deduction'))}."
         )
+    if tool_name == "get_tax" and intent == "tax_regime_query":
+        data = tool_data.get("data", [])
+    
+        if not data:
+            return "Tax regime information is not available."
+    
+        regime_code = data[0].get("tax_regime")
+    
+        if regime_code == "O":
+            regime = "Old Tax Regime"
+        elif regime_code == "N":
+            regime = "New Tax Regime"
+        else:
+            regime = "Unknown"
+    
+        year = plan.get("params", {}).get("year", datetime.now().year)
+    
+        return f"For the financial year {year-1}–{year}, you were under the {regime}."
+
     if tool_name == "get_tax" and rows:
         row = rows[0]
         return f"For {row.get('month')} {row.get('eyear')}, your total tax liability was {format_currency(row.get('total_tax_liability'))}."
@@ -211,19 +325,29 @@ def _deterministic_format(
             lines.append(f"{a_type} of {amt} (Period: {start_date} to {end_date})")
         return f"For {period}, we identified: " + ", ".join(lines) + "."
 
-    if tool_name == "get_full_salary_breakdown" and isinstance(tool_data, dict):
+    if tool_name == "get_full_salary_breakdown" and intent == "salary_explanation":
         data = tool_data.get("data", {})
-        if not isinstance(data, dict) or not data:
-            return FALLBACK_MSG
-        earnings = data.get("earnings", {})
-        deductions = data.get("deductions", {})
-        return (
-            f"For {period}, your key earnings were Basic {format_currency(earnings.get('Basic', 0))}, "
-            f"HRA {format_currency(earnings.get('HRA', 0))}, Bonus {format_currency(earnings.get('Bonus', 0))}, "
-            f"and Other Allowance {format_currency(earnings.get('Other Allowance', 0))}. "
-            f"Your key deductions were PF {format_currency(deductions.get('PF', 0))}, PT {format_currency(deductions.get('PT', 0))}, "
-            f"Income Tax {format_currency(deductions.get('Income Tax', 0))}, and Other deductions {format_currency(deductions.get('Other', 0))}."
+
+        netpay = format_currency(data.get("netpay", 0))
+        deductions = format_currency(data.get("gross_deduction", 0))
+        lop_days = int(data.get("lop_days", 0) or 0)
+
+        response = f"I found your payroll for {period}."
+
+        if lop_days > 0:
+            response += (
+                f"\n\nYour salary includes an LOP impact of {lop_days} day(s), "
+                f"which reduced your payable earnings."
+            )
+
+        response += (
+            f"\n\nFor {period}, your net salary was {netpay} "
+            f"with total deductions of {deductions}."
         )
+
+    if response:
+        return response
+
     return FALLBACK_MSG
 
 
@@ -270,54 +394,19 @@ def _format_field_response(
     return response
 
 
-def _safe_format(
-    user_query: str,
-    tool_name: str,
-    tool_data: dict[str, Any],
-    plan: dict[str, Any],
-    context: str = "",
-) -> str:
-    if tool_name == "get_field_value":
-        params = plan.get("params", {}) if isinstance(plan, dict) else {}
-        deterministic_answer = _format_field_response(
-            field_key=params.get("field_key"),
-            tool_data=tool_data,
-            month=params.get("month"),
-            year=params.get("year"),
-        )
-        if deterministic_answer == FALLBACK_MSG:
-            return FALLBACK_MSG
-        try:
-            polished = _format_with_llm(
-                query=user_query,
-                tool_data=tool_data,
-                base_answer=deterministic_answer,
-                context=context,
-            )
-            return polished or deterministic_answer
-        except Exception as exc:
-            print(f"LLM polish skipped due to error: {exc}")
-            return deterministic_answer
+OLLAMA_URL = "http://localhost:11434/api/generate"
 
-    deterministic_answer = _deterministic_format(
-        user_query=user_query,
-        tool_name=tool_name,
-        tool_data=tool_data,
-        plan=plan,
-    )
-    if deterministic_answer == FALLBACK_MSG:
-        return FALLBACK_MSG
+def _safe_format(prompt):
     try:
-        polished = _format_with_llm(
-            query=user_query,
-            tool_data=tool_data,
-            base_answer=deterministic_answer,
-            context=context,
+        res = requests.post(
+            OLLAMA_URL,
+            json={"model": "phi3", "prompt": prompt, "stream": False},
+            timeout=5
         )
-        return polished or deterministic_answer
-    except Exception as exc:
-        print(f"LLM polish skipped due to error: {exc}")
-        return deterministic_answer
+        text = res.json().get("response", "")
+        return text.strip() if text else None
+    except:
+        return None
 
 
 def _smart_analyze_no_data_message(tool_data: dict[str, Any]) -> str:
@@ -340,6 +429,7 @@ def _summarize_analyze_result(tool_data: dict[str, Any]) -> str:
 def process_user_query(
     user_query: str, employee_id: int, history: list[dict[str, Any]] | None = None
 ) -> dict[str, Any]:
+    intent_type = classify_intent(user_query)
     event = {
         "employee_id": employee_id,
         "query": user_query,
@@ -366,16 +456,35 @@ def process_user_query(
         log_audit({**event, **result, "stage": "guardrails"})
         return result
 
-    parsed = extract_query_params(user_query)
-    
-    # DEFAULT MONTH LOGIC
-    if not parsed.get("month"):
-        m, y = _get_latest_month_from_db(employee_id)
-        if m and y:
-            parsed["month"] = m
-            parsed["year"] = y
+    # -----------------------------
+    # LLM INTENT + PLANNING
+    # -----------------------------
+    llm_output = llm_plan(user_query)
+    plan = validate_llm_plan(llm_output, employee_id)
+    intent = None
 
-    normalized = normalize_time(parsed)
+    if llm_output and "intent" in llm_output:
+        intent = llm_output["intent"]
+
+    # fallback to old planner if LLM fails
+    if not plan:
+        parsed = extract_query_params(user_query)
+        normalized = normalize_time(parsed)
+        plan = plan_tool(normalized, employee_id)
+        intent = normalized.get("intent")
+        
+        # DEFAULT MONTH LOGIC
+        if not parsed.get("month"):
+            m, y = _get_latest_month_from_db(employee_id)
+            if m and y:
+                parsed["month"] = m
+                parsed["year"] = y
+
+        normalized = normalize_time(parsed)
+    else:
+        # Default empty dicts for properties dependent on parsing
+        parsed = {}
+        normalized = {"time_valid": True}
     print("DEBUG NORMALIZED:", normalized)
     pipeline_context: dict[str, Any] = {
         "employee_id": employee_id,
@@ -394,19 +503,19 @@ def process_user_query(
         return result
 
     # For direct field lookups, bypass FAQ to preserve deterministic field routing.
-    faq_hit = None
-    if not normalized.get("field_request"):
+    if intent_type == "faq":
         faq_hit = retrieve_faq(user_query, threshold=0.65)
-    if faq_hit:
-        result = {
-            "status": "ok",
-            "answer": faq_hit["answer"],
-            "source": "faq",
-        }
-        log_audit({**event, **result, "stage": "faq"})
-        return result
+        if faq_hit:
+            result = {
+                "status": "ok",
+                "answer": faq_hit["answer"],
+                "source": "faq",
+            }
+            log_audit({**event, **result, "stage": "faq"})
+            return result
 
-    plan = plan_tool(normalized, employee_id, user_query)
+    if not plan:
+        plan = plan_tool(normalized, employee_id, user_query)
     tool_name = plan.get("tool")
     pipeline_context["plan"] = plan
     if tool_name == "fallback" or not validate_plan(plan):
@@ -426,6 +535,15 @@ def process_user_query(
 
     if isinstance(tool_data, dict) and tool_data.get("status") not in {"success", "success_fallback"}:
 
+        if tool_name == "analyze_salary":
+            result = {
+                "status": "fallback",
+                "answer": "Salary comparison could not be completed due to missing previous month data.",
+                "source": "payroll",
+                "tool_call": plan,
+                "tool_result": tool_data,
+            }
+            return result
         # -----------------------------
         # SAFE FALLBACK ENGINE (NEW)
         # -----------------------------
@@ -445,6 +563,11 @@ def process_user_query(
                 log_pipeline({**pipeline_context, "result": result, "stage": "fallback_engine"})
                 log_audit({**event, **result, "stage": "fallback_engine"})
                 return result
+
+        if intent != "salary_explanation":
+            q = user_query.lower()
+            if "salary" in q and any(k in q for k in ["why", "reason", "less", "reduced", "deduction"]):
+                intent = "salary_explanation"
 
         # EXISTING LOGIC CONTINUES (UNCHANGED)
         if tool_name == "analyze_salary":
@@ -473,13 +596,49 @@ def process_user_query(
         return result
 
     context = _build_recent_context(history, limit=3)
-    answer = _safe_format(
-        user_query=user_query,
-        tool_name=tool_name,
-        tool_data=tool_data,
-        plan=plan,
-        context=context,
-    )
+    
+    if tool_name == "get_field_value":
+        params = plan.get("params", {}) if isinstance(plan, dict) else {}
+        deterministic_answer = _format_field_response(
+            field_key=params.get("field_key"),
+            tool_data=tool_data,
+            month=params.get("month"),
+            year=params.get("year"),
+        )
+    else:
+        deterministic_answer = _deterministic_format(
+            user_query=user_query,
+            tool_name=tool_name,
+            tool_data=tool_data,
+            plan=plan,
+            intent=intent,
+        )
+
+    if deterministic_answer == FALLBACK_MSG:
+        answer = FALLBACK_MSG
+    else:
+        prompt = (
+            f"You are a helpful assistant. Simplify this payroll data point appropriately.\n"
+            f"Context: {context}\n"
+            f"User Query: {user_query}\n"
+            f"Deterministic Data: {deterministic_answer}\n"
+        )
+        formatted = _safe_format(prompt)
+
+        if formatted:
+            answer = formatted
+        elif deterministic_answer:
+            answer = deterministic_answer
+        else:
+            answer = FALLBACK_MSG
+        
+        if formatted:
+            answer = formatted
+        else:
+            answer = deterministic_answer
+    if not answer:
+        answer = FALLBACK_MSG
+
     if answer.strip() == FALLBACK_MSG:
         status = "fallback"
     else:
@@ -506,4 +665,6 @@ def process_user_query(
             ),
         }
     )
+    print("DEBUG INTENT:", intent)
+    print("DEBUG TOOL:", plan.get("tool"))
     return result

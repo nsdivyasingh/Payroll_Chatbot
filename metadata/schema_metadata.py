@@ -190,8 +190,26 @@ PAYROLL_FIELDS = {
     """,
 
     "lop_relation": """
-    LOP (Loss of Pay) reduces salary by decreasing payable days.
-    lopd in pay_register and lop_days in lop_data represent the same concept.
+    LOP (Loss of Pay) directly reduces an employee’s salary by decreasing payable working days.
+
+    There are two representations of LOP in the system:
+
+    1. pay_register (monthly payroll summary):
+    - lopd → Total number of LOP days considered for salary calculation in that month.
+
+    2. lop_data (detailed tracker):
+    - month → The payroll month in which the LOP deduction was applied (i.e., when salary was reduced).
+    - lop_date → The actual calendar date on which the employee took unpaid leave.
+    - lop_days → Number of unpaid leave days taken on that specific date.
+
+    Important interpretation:
+    - lop_date tells WHEN the leave was taken.
+    - month tells WHEN the salary impact happened.
+    - lop_days represents the magnitude of impact.
+
+    For reasoning:
+    - Salary reduction may occur if lop_days increases.
+    - Even if leave was taken in one month, the deduction may reflect in another payroll month.
     """,
 
     "allowance_relation": """

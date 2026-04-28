@@ -253,6 +253,28 @@ def normalize_time(parsed: dict[str, Any], now: datetime | None = None) -> dict[
         normalized["previous_month"] = None
         normalized["previous_year"] = None
 
+    # STEP 1 — ADD PREVIOUS MONTH LOGIC
+    MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+    intent = parsed.get("intent")
+
+    # ONLY for reasoning queries
+    if intent == "salary_explanation" and normalized.get("month") and normalized.get("year"):
+        try:
+            idx = MONTHS.index(normalized["month"])
+            if idx == 0:
+                prev_month = "Dec"
+                prev_year = normalized["year"] - 1
+            else:
+                prev_month = MONTHS[idx - 1]
+                prev_year = normalized["year"]
+            
+            normalized["previous_month"] = prev_month
+            normalized["previous_year"] = prev_year
+        except ValueError:
+            pass
+
     normalized["field_request"] = parsed.get("field_request")
 
     return normalized

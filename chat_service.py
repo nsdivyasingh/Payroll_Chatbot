@@ -15,6 +15,8 @@ from metadata.schema_metadata import PAYROLL_FIELDS as SCHEMA_METADATA
 from metadata.policy_rules import SYSTEM_POLICIES
 from query_engine import engine
 from sqlalchemy import text
+from llm_smart_roter import route_query_with_llm
+from safe_query_engine import execute_safe_query
 
 FIELD_DESCRIPTIONS = SCHEMA_METADATA.get("FIELD_DESCRIPTIONS", {})
 RELATIONSHIPS = SCHEMA_METADATA.get("RELATIONSHIPS", {})
@@ -374,6 +376,7 @@ def process_user_query(
             parsed["year"] = y
 
     normalized = normalize_time(parsed)
+    print("DEBUG NORMALIZED:", normalized)
     pipeline_context: dict[str, Any] = {
         "employee_id": employee_id,
         "query": user_query,
@@ -422,6 +425,28 @@ def process_user_query(
     pipeline_context["tool_result"] = tool_data
 
     if isinstance(tool_data, dict) and tool_data.get("status") not in {"success", "success_fallback"}:
+
+        # -----------------------------
+        # SAFE FALLBACK ENGINE (NEW)
+        # -----------------------------
+        plan_llm = route_query_with_llm(user_query, SCHEMA_METADATA)
+
+        if plan_llm:
+            fallback_result = execute_safe_query(plan_llm, employee_id)
+
+            if fallback_result:
+                result = {
+                    "status": "ok",
+                    "answer": f"Here is what I found: {fallback_result}",
+                    "source": "fallback_engine",
+                    "tool_call": plan,
+                    "tool_result": fallback_result,
+                }
+                log_pipeline({**pipeline_context, "result": result, "stage": "fallback_engine"})
+                log_audit({**event, **result, "stage": "fallback_engine"})
+                return result
+
+        # EXISTING LOGIC CONTINUES (UNCHANGED)
         if tool_name == "analyze_salary":
             result = {
                 "status": "fallback",
@@ -434,6 +459,7 @@ def process_user_query(
             log_pipeline({**pipeline_context, "result": result, "stage": "tool_execution"})
             log_audit({**event, **result, "stage": "tool_execution"})
             return result
+
         result = {
             "status": "fallback",
             "answer": _data_aware_no_data_message(tool_name, plan),

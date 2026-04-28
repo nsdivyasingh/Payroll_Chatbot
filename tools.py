@@ -304,10 +304,10 @@ def _first_row(payload: dict[str, Any]) -> dict[str, Any] | None:
 def analyze_salary(employee_id, month, year, previous_month, previous_year):
 
     current = get_salary(employee_id, month, year)
-    previous = get_salary(employee_id, previous_month, previous_year)
+    previous = get_salary(employee_id, previous_month, previous_year) if previous_month and previous_year else {}
 
     tax_current = get_tax(employee_id, month, year)
-    tax_previous = get_tax(employee_id, previous_month, previous_year)
+    tax_previous = get_tax(employee_id, previous_month, previous_year) if previous_month and previous_year else {}
 
     lop_current = get_lop(employee_id, month, year)
 
@@ -341,6 +341,8 @@ def analyze_salary(employee_id, month, year, previous_month, previous_year):
 
     if not prev:
         reasons.append("Previous month data is not available for comparison, so analysis is based only on current salary components.")
+        if not previous_month or not previous_year:
+            reasons.append("Previous month comparison data was not available.")
     else:
         # 🔥 1. NET PAY CHANGE
         delta = curr.get("total_netpay", 0) - prev.get("total_netpay", 0)
